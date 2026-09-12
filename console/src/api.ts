@@ -101,10 +101,29 @@ export interface TwinPayload {
   path_p05: number[];
 }
 
+export interface SupervisoryGap {
+  recovery_state: string;
+  asset_classification: {
+    days_past_due: number;
+    state: string;
+    band: string;
+    is_stressed: boolean;
+    next_state: string | null;
+    days_to_next_downgrade: number | null;
+    verify_against_circular: string;
+  };
+  behavioural_concern: number;
+  lead: number;
+  acting_early: boolean;
+  missed: boolean;
+  note: string;
+}
+
 export interface DecisionResponse {
   decision_id: string;
   outcome: string;
   recovery_state: string;
+  supervisory: SupervisoryGap;
   customer: {
     language: string;
     headline: string;
@@ -157,13 +176,23 @@ export interface DecisionResponse {
       description: string;
       customer_sentence: string;
       regulatory_cost: string;
+      reg_cost: string;
+      auto_proposable: boolean;
+      requires_human_credit_officer: boolean;
       economic_cost: string;
       reversible: boolean;
       new_emi: string | null;
       new_day_of_month: number | null;
       additional_total_cost: string;
     } | null;
-    alternatives: { rung: number; name: string; regulatory_cost: string; economic_cost: string }[];
+    alternatives: {
+      rung: number;
+      name: string;
+      regulatory_cost: string;
+      reg_cost: string;
+      requires_human_credit_officer: boolean;
+      economic_cost: string;
+    }[];
   };
   offer?: {
     product_id: string;

@@ -104,6 +104,11 @@ def decide(req: DecideRequest) -> dict:
         "decision_id": d.decision_id,
         "outcome": d.outcome.value,
         "recovery_state": d.recovery_state.value,
+        # The supervisory position, beside the behavioural one. Surfaced at the
+        # top level rather than only inside the regulator rendering, because the
+        # distance between the two ladders is the thing worth looking at and a
+        # surface that has to dig for one of them will show neither.
+        "supervisory": d.supervisory_gap.render(),
         "customer": {
             "language": customer.language,
             "headline": customer.headline,

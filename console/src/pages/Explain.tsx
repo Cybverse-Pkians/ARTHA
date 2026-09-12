@@ -95,7 +95,22 @@ function DecisionView({ d }: { d: DecisionResponse }) {
                   : "Cleared every constraint."
           }
         />
-        <StatTile label="Recovery state" value={titleCase(d.recovery_state)} />
+        <StatTile
+          label="Behavioural state"
+          value={titleCase(d.recovery_state)}
+          note="ARTHA's own, forward-looking, customer-level."
+        />
+        <StatTile
+          label="Asset classification"
+          value={d.supervisory.asset_classification.state.replace(/_/g, "-")}
+          note={
+            d.supervisory.acting_early
+              ? "Still Standard — acting before the supervisory ladder moved."
+              : d.supervisory.missed
+                ? "Overdue with no behavioural flag. Reported, not suppressed."
+                : d.supervisory.asset_classification.band
+          }
+        />
         <StatTile
           label="Adverse action"
           value={d.is_adverse_action ? "Yes" : "No"}
@@ -306,8 +321,15 @@ function DecisionView({ d }: { d: DecisionResponse }) {
                 <div className="reason-desc">{d.intervention.recommended.description}</div>
               </div>
               <p className="small secondary">
-                <strong>Regulatory cost:</strong> {d.intervention.recommended.regulatory_cost}
+                <strong>Regulatory cost:</strong>{" "}
+                {d.intervention.recommended.reg_cost.replace(/_/g, " ").toLowerCase()}
+                {d.intervention.recommended.requires_human_credit_officer
+                  ? " — requires a human credit officer"
+                  : d.intervention.recommended.auto_proposable
+                    ? " — ARTHA may propose this on its own"
+                    : ""}
               </p>
+              <p className="small secondary">{d.intervention.recommended.regulatory_cost}</p>
               <p className="small secondary">
                 <strong>Economic cost:</strong> {d.intervention.recommended.economic_cost}
               </p>
@@ -319,6 +341,7 @@ function DecisionView({ d }: { d: DecisionResponse }) {
                       <th className="num">Rung</th>
                       <th>Intervention</th>
                       <th className="num">Economic cost</th>
+                      <th>Cost tier</th>
                       <th>Regulatory treatment</th>
                     </tr>
                   </thead>
@@ -328,6 +351,10 @@ function DecisionView({ d }: { d: DecisionResponse }) {
                         <td className="num">{a.rung}</td>
                         <td>{a.name}</td>
                         <td className="num">{a.economic_cost}</td>
+                        <td className="small">
+                          {a.reg_cost.replace(/_/g, " ").toLowerCase()}
+                          {a.requires_human_credit_officer ? " (human)" : ""}
+                        </td>
                         <td className="small secondary">{a.regulatory_cost}</td>
                       </tr>
                     ))}
