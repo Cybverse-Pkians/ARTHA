@@ -33,8 +33,19 @@ from enum import IntEnum
 
 from ..core import reason_codes as rc
 from ..core.money import emi_paise, format_inr, total_cost_paise
-from ..core.types import CustomerProfile, PayIntent
+from ..core.types import CustomerProfile, IncomeType, PayIntent
 from ..features.builder import income_arrival_day
+
+
+#: Splitting an instalment helps only where income arrives more than once a
+#: month. Offering it to a salaried customer with a single monthly credit
+#: would add a debit without adding relief.
+_SPLIT_SUITED_INCOME = frozenset({
+    IncomeType.GIG,
+    IncomeType.SEASONAL,
+    IncomeType.AGRICULTURAL,
+    IncomeType.BUSINESS,
+})
 
 
 class Rung(IntEnum):
@@ -45,7 +56,34 @@ class Rung(IntEnum):
     SHORT_PAYMENT_HOLIDAY = 3
     TENURE_EXTENSION = 4
     FORMAL_RESTRUCTURE = 5
-    RECOVERY = 6
+    COLLECTIONS = 6            # not an intervention — the absence of one
+
+
+class RegCost(IntEnum):
+    """The *supervisory* cost of an intervention, as a value the code can read.
+
+    This was previously only the English prose in ``Intervention.regulatory_cost``,
+    which every caller rendered and none branched on — so the two-tier escalation
+    the design claims was a caption rather than a control. Typing it lets the
+    Gate refuse to auto-propose a rung that would cost the bank an asset
+    downgrade, and route it to a human credit officer instead.
+
+    The prose is retained alongside as ``regulatory_cost``; it says *why*, and
+    this says *what to do about it*.
+    """
+
+    NONE = 0                   # servicing change — ARTHA may propose freely
+    POSSIBLE_CONCESSION = 1    # may be a concession; assess case by case
+    DOWNGRADE_EXPECTED = 2     # escalate to a human credit officer
+
+    @property
+    def requires_human_credit_officer(self) -> bool:
+        return self is RegCost.DOWNGRADE_EXPECTED
+
+    @property
+    def auto_proposable(self) -> bool:
+        """Whether ARTHA may put this in front of a customer on its own."""
+        return self is RegCost.NONE
 
 
 @dataclass(frozen=True)
@@ -55,6 +93,7 @@ class Intervention:
     description: str
     customer_sentence: str
     regulatory_cost: str
+    reg_cost: RegCost
     economic_cost_paise: int
     reason_code: str
     reason_params: dict[str, str] = field(default_factory=dict)
@@ -89,9 +128,21 @@ class InterventionLadder:
         annual_rate: float,
         outstanding_paise: int,
         pay_intent: PayIntent = PayIntent.UNABLE,
+        lead_time_days: int | None = None,
         as_of: date | None = None,
     ) -> LadderResult:
-        """Build the ladder and recommend the lowest rung that actually helps.
+        """Build the ladder and recommend the cheapest rung still available.
+
+        ``lead_time_days`` is what converts model quality into money, and is
+        why report §5.3 reports lead time rather than accuracy: days convert
+        into rungs and rungs differ by orders of magnitude. Passing it applies
+        ``lead_time_to_rung`` as a *floor* — a customer found three days before
+        a due date cannot be helped by moving that date, so the cheap rungs are
+        withdrawn rather than recommended and left to fail.
+
+        Omitting it means "lead time unknown", and the ladder is not
+        constrained. That is deliberately not the same as no time being left:
+        an unknown must not silently escalate every customer to a restructure.
 
         Forbearance is withheld outright where the Sentinel has determined
         unwillingness rather than inability. Report §6.3: forbearance for genuine
@@ -117,6 +168,10 @@ class InterventionLadder:
         if shift:
             rungs.append(shift)
 
+        split = self._split_instalment(profile, current_emi_paise, current_day_of_month)
+        if split:
+            rungs.append(split)
+
         rungs.append(self._payment_holiday(current_emi_paise, remaining_tenure_months))
         rungs.append(
             self._tenure_extension(
@@ -127,6 +182,15 @@ class InterventionLadder:
         rungs.append(self._formal_restructure(outstanding_paise))
 
         rungs.sort(key=lambda i: i.rung)
+
+        # Withdraw rungs there is no longer time to execute. The most expensive
+        # rung always survives — there is always something to offer, and an
+        # empty ladder would silently become a refusal.
+        if lead_time_days is not None:
+            floor = lead_time_to_rung(lead_time_days)
+            affordable = [i for i in rungs if i.rung >= floor]
+            rungs = affordable or rungs[-1:]
+
         return LadderResult(recommended=rungs[0], alternatives=tuple(rungs[1:]))
 
     # ----------------------------------------------------------- the rungs
@@ -166,11 +230,70 @@ class InterventionLadder:
                 "difficulty — no asset-classification consequence expected. VERIFY "
                 "against the current circular before relying on this."
             ),
+            reg_cost=RegCost.NONE,
             economic_cost_paise=0,
             reason_code=rc.INT_EMI_DATE_SHIFT.code,
             reason_params={"old": str(current_day), "new": str(target)},
             new_emi_paise=emi,
             new_day_of_month=target,
+        )
+
+    @staticmethod
+    def _split_instalment(
+        profile: CustomerProfile, emi: int, current_day: int
+    ) -> Intervention | None:
+        """Rung 2 — collect the same instalment in two parts, not one.
+
+        Declared in the enum and reachable from ``lead_time_to_rung`` since the
+        ladder was written, but never constructed, so a customer whose lead
+        time selected this rung could only ever be handed the next one up.
+
+        The full contractual instalment is still collected within the same
+        billing month; nothing is deferred, reduced or rescheduled beyond it.
+        That is the reason it is a servicing arrangement rather than a
+        concession, and it is the rung that fits irregular income — a gig
+        earner with two payouts a month cannot always meet one large debit but
+        can usually meet two smaller ones.
+        """
+        if emi <= 0:
+            return None
+        arrival = income_arrival_day(profile)
+        if arrival is None:
+            return None
+        if profile.income_type not in _SPLIT_SUITED_INCOME:
+            return None
+
+        first_half = emi // 2
+        second_half = emi - first_half
+        first_day = min(max(arrival + 2, 1), 28)
+        second_day = ((first_day + 14 - 1) % 28) + 1
+
+        return Intervention(
+            rung=Rung.PARTIAL_PREPAYMENT_PLAN,
+            name="Split the instalment",
+            description=(
+                f"Collect {format_inr(first_half)} on the {first_day} and "
+                f"{format_inr(second_half)} on the {second_day} instead of "
+                f"{format_inr(emi)} in one debit on the {current_day}. The full "
+                f"instalment is still collected within the month."
+            ),
+            customer_sentence=(
+                f"We can take your payment in two parts this month — "
+                f"{format_inr(first_half)} and {format_inr(second_half)} — "
+                f"instead of one."
+            ),
+            regulatory_cost=(
+                "The full contractual instalment is collected within the same "
+                "billing month, so this is ordinarily a servicing arrangement "
+                "rather than a concession for financial difficulty. VERIFY "
+                "against the current circular before relying on this."
+            ),
+            reg_cost=RegCost.NONE,
+            economic_cost_paise=0,
+            reason_code=rc.INT_EMI_DATE_SHIFT.code,
+            reason_params={"old": str(current_day), "new": str(first_day)},
+            new_emi_paise=emi,
+            new_day_of_month=first_day,
         )
 
     @staticmethod
@@ -189,6 +312,7 @@ class InterventionLadder:
                 "May constitute a concession where granted for financial difficulty; "
                 "classification impact must be assessed case by case."
             ),
+            reg_cost=RegCost.POSSIBLE_CONCESSION,
             economic_cost_paise=int(emi * 0.08),
             reason_code=rc.INT_TENURE_EXTENSION.code,
             reason_params={"emi": format_inr(emi), "extra": format_inr(int(emi * 0.08))},
@@ -228,6 +352,7 @@ class InterventionLadder:
                 "Granted on account of borrower financial difficulty this generally "
                 "carries asset-classification and provisioning consequences."
             ),
+            reg_cost=RegCost.DOWNGRADE_EXPECTED,
             economic_cost_paise=extra,
             reason_code=rc.INT_TENURE_EXTENSION.code,
             reason_params={"emi": format_inr(new_emi), "extra": format_inr(extra)},
@@ -253,6 +378,7 @@ class InterventionLadder:
             regulatory_cost=(
                 "Asset-classification downgrade and provisioning consequences apply."
             ),
+            reg_cost=RegCost.DOWNGRADE_EXPECTED,
             economic_cost_paise=int(outstanding * 0.12),
             reason_code=rc.INT_TENURE_EXTENSION.code,
             reason_params={

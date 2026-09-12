@@ -151,6 +151,10 @@ def decide(req: DecideRequest) -> dict:
                     "rung": int(r.rung), "name": r.name, "description": r.description,
                     "customer_sentence": r.customer_sentence,
                     "regulatory_cost": r.regulatory_cost,
+                    "reg_cost": r.reg_cost.name,
+                    "auto_proposable": r.reg_cost.auto_proposable,
+                    "requires_human_credit_officer":
+                        r.reg_cost.requires_human_credit_officer,
                     "economic_cost": format_inr(r.economic_cost_paise),
                     "reversible": r.reversible,
                     "new_emi": format_inr(r.new_emi_paise) if r.new_emi_paise else None,
@@ -161,6 +165,9 @@ def decide(req: DecideRequest) -> dict:
             "alternatives": [
                 {"rung": int(a.rung), "name": a.name,
                  "regulatory_cost": a.regulatory_cost,
+                 "reg_cost": a.reg_cost.name,
+                 "requires_human_credit_officer":
+                     a.reg_cost.requires_human_credit_officer,
                  "economic_cost": format_inr(a.economic_cost_paise)}
                 for a in bundle.ladder.alternatives
             ],

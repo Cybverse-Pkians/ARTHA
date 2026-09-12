@@ -428,6 +428,10 @@ class ArthaEngine:
                 annual_rate=0.145,
                 outstanding_paise=s.median_amount_paise * 24,
                 pay_intent=sentinel.pay_intent,
+                # The Sentinel computed this and the ladder used to discard it,
+                # which left report §5.3's central claim — that earlier
+                # detection buys a cheaper rung — unimplemented.
+                lead_time_days=sentinel.lead_time_days,
                 as_of=as_of,
             )
 
