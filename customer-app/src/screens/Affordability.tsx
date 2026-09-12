@@ -72,15 +72,17 @@ export function Affordability({
         </div>
       ) : null}
 
-      <div style={{ marginTop: 20 }}>
-        <button className="btn btn-primary" onClick={onAgree}>
-          {t(lang, "agree")}
-        </button>
-        <button className="btn" onClick={onDecline}>
-          {t(lang, "not_now")}
-        </button>
-        <button className="btn btn-quiet">{t(lang, "disagree")}</button>
-        <p className="note" style={{ textAlign: "center" }}>
+      <div className="affordability-actions">
+        <div className="affordability-button-row">
+          <button className="btn btn-primary" onClick={onAgree}>
+            {t(lang, "agree")}
+          </button>
+          <button className="btn" onClick={onDecline}>
+            {t(lang, "not_now")}
+          </button>
+          <button className="btn btn-quiet">{t(lang, "disagree")}</button>
+        </div>
+        <p className="note affordability-review-note">
           {t(lang, "human_review")}
         </p>
       </div>

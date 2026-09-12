@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+.venv*/
 venv/
 .env
 *.egg-info/
@@ -28,6 +29,5 @@ index.html
 frontcheck.html
 pytest.html
 
-# local tooling
-CLAUDE.md
-.claude/
+package-lock.json
+*.tsbuildinfo

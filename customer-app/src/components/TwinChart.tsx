@@ -89,6 +89,11 @@ export function TwinChart({
   }
 
   const bufferY = geom.y(safeBufferPaise);
+  const endWithoutY = pathWithout.length > 0 ? geom.y(pathWithout[pathWithout.length - 1]) : 0;
+  const endWithY = pathWith.length > 0 ? geom.y(pathWith[pathWith.length - 1]) : 0;
+  const endLabelsOverlap = Math.abs(endWithoutY - endWithY) < 18;
+  const labelWithoutY = endLabelsOverlap ? Math.max(PAD.top + 10, endWithoutY - 8) : endWithoutY + 4;
+  const labelWithY = endLabelsOverlap ? Math.min(H - PAD.bottom - 2, endWithY + 13) : endWithY + 4;
 
   return (
     <div className="chart-wrap" ref={wrapRef}>
@@ -178,24 +183,50 @@ export function TwinChart({
 
         {/* direct labels at the line ends */}
         {pathWithout.length > 0 ? (
-          <text
-            x={geom.x(pathWithout.length - 1) + 7}
-            y={geom.y(pathWithout[pathWithout.length - 1]) + 4}
-            fontSize="11"
-            fill="var(--text-secondary)"
-          >
-            {labelWithout}
-          </text>
+          <g>
+            {endLabelsOverlap ? (
+              <line
+                x1={geom.x(pathWithout.length - 1) + 2}
+                y1={endWithoutY}
+                x2={geom.x(pathWithout.length - 1) + 5}
+                y2={labelWithoutY - 3}
+                stroke="var(--series-1)"
+                strokeWidth={1}
+              />
+            ) : null}
+            <text
+              x={geom.x(pathWithout.length - 1) + 7}
+              y={labelWithoutY}
+              fontSize="11"
+              fill="var(--series-1)"
+              fontWeight={600}
+            >
+              {labelWithout}
+            </text>
+          </g>
         ) : null}
         {pathWith.length > 0 ? (
-          <text
-            x={geom.x(pathWith.length - 1) + 7}
-            y={geom.y(pathWith[pathWith.length - 1]) + 4}
-            fontSize="11"
-            fill="var(--text-secondary)"
-          >
-            {labelWith}
-          </text>
+          <g>
+            {endLabelsOverlap ? (
+              <line
+                x1={geom.x(pathWith.length - 1) + 2}
+                y1={endWithY}
+                x2={geom.x(pathWith.length - 1) + 5}
+                y2={labelWithY - 3}
+                stroke="var(--series-2)"
+                strokeWidth={1}
+              />
+            ) : null}
+            <text
+              x={geom.x(pathWith.length - 1) + 7}
+              y={labelWithY}
+              fontSize="11"
+              fill="var(--series-2)"
+              fontWeight={600}
+            >
+              {labelWith}
+            </text>
+          </g>
         ) : null}
 
         {/* x axis */}
