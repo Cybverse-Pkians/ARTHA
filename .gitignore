@@ -23,11 +23,12 @@ data/models/
 
 .DS_Store
 
-# local harness artefacts
-.harness.html
-index.html
-frontcheck.html
-pytest.html
+# local harness artefacts — repo root only; unanchored names would also
+# match customer-app/index.html and console/index.html (the Vite entries)
+/.harness.html
+/index.html
+/frontcheck.html
+/pytest.html
 
 package-lock.json
 *.tsbuildinfo
