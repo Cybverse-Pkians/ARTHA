@@ -27,3 +27,7 @@ data/models/
 index.html
 frontcheck.html
 pytest.html
+
+# local tooling
+CLAUDE.md
+.claude/

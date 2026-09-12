@@ -166,6 +166,109 @@ class DecisionObject:
         blob = json.dumps(payload, sort_keys=True, default=str).encode()
         return hashlib.sha256(blob).hexdigest()
 
+    @classmethod
+    def from_regulator_rendering(cls, payload: dict) -> "DecisionObject":
+        """Rebuild a decision from its stored regulator rendering.
+
+        This is the audit trail's whole purpose made executable. If a decision
+        cannot be reconstructed from its own record, then "reproducible on
+        demand" is a claim about a database rather than about the system, and a
+        supervisor asking about a refusal from March gets a re-run rather than
+        the original.
+
+        It also closes a subtle hole in the firewall. Validating model output
+        against a *freshly computed* decision checks the numerals against a
+        ground the model never saw — today's buffer, today's offer. The check
+        only means something against the object the model was actually phrasing.
+        """
+        from ..products.catalogue import BY_ID
+
+        offer = None
+        offer_payload = payload.get("offer")
+        if offer_payload:
+            product = BY_ID.get(offer_payload["product_id"])
+            if product is not None:
+                offer = ProductOffer(
+                    product=product,
+                    amount_paise=offer_payload["amount_paise"],
+                    eligible_amount_paise=offer_payload["eligible_amount_paise"],
+                    tenure_months=offer_payload["tenure_months"],
+                    emi_paise=offer_payload["emi_paise"],
+                    day_of_month=offer_payload["day_of_month"],
+                    annual_rate=offer_payload["annual_rate"],
+                    total_interest_paise=offer_payload["total_interest_paise"],
+                )
+
+        twin = None
+        twin_payload = payload.get("twin")
+        if twin_payload:
+            twin = TwinSummary(
+                verdict=twin_payload["verdict"],
+                safe_buffer_paise=twin_payload["safe_buffer_paise"],
+                min_balance_p05_paise=twin_payload["min_balance_p05_paise"],
+                breach_probability=twin_payload["breach_probability"],
+                baseline_breach_probability=twin_payload["baseline_breach_probability"],
+                resilience_score=twin_payload["resilience_score"],
+                shocks_absorbed=twin_payload["shocks_absorbed"],
+                first_breach_date=twin_payload.get("first_breach_date"),
+                sentence_en=twin_payload.get("sentence_en", ""),
+                scenarios=tuple(twin_payload.get("scenarios", ())),
+            )
+
+        counterfactual = None
+        cf_payload = payload.get("counterfactual")
+        if cf_payload:
+            counterfactual = CounterfactualSummary(
+                available=cf_payload["available"],
+                amount_paise=cf_payload.get("amount_paise", 0),
+                tenure_months=cf_payload.get("tenure_months", 0),
+                emi_paise=cf_payload.get("emi_paise", 0),
+                blocker=cf_payload.get("blocker", ""),
+            )
+
+        consent = payload.get("consent", {})
+        return cls(
+            decision_id=payload["decision_id"],
+            customer_token=payload["customer_token"],
+            created_at=payload["created_at"],
+            outcome=GateOutcome(payload["outcome"]),
+            offer=offer,
+            moment=(
+                MomentEvidence(
+                    trigger=payload["moment"]["trigger"],
+                    description=payload["moment"]["description"],
+                    evidence_dates=tuple(payload["moment"].get("evidence_dates", ())),
+                    series_id=payload["moment"].get("series_id"),
+                )
+                if payload.get("moment") else None
+            ),
+            twin=twin,
+            counterfactual=counterfactual,
+            gate_trace=tuple(
+                GateCheck(
+                    name=c["check"], passed=c["passed"], detail=c["detail"],
+                    reason_code=c.get("reason_code"),
+                    outcome_if_failed=GateOutcome(c.get("outcome_if_failed", "SUPPRESS")),
+                )
+                for c in payload.get("gate_trace", ())
+            ),
+            reasons=tuple(
+                ReasonEntry(
+                    code=r["code"], weight=r.get("weight", 0.0),
+                    params=dict(r.get("params", {})),
+                )
+                for r in payload.get("reason_codes", ())
+            ),
+            shap=dict(payload.get("shap", {})),
+            recovery_state=RecoveryState(payload.get("recovery_state", "STABLE")),
+            model_versions=dict(payload.get("model_versions", {})),
+            policy_version=payload.get("policy_version", "0.1.0"),
+            consent_purposes_used=tuple(consent.get("purposes_used", ())),
+            consent_purposes_excluded=tuple(consent.get("purposes_excluded", ())),
+            features_excluded=tuple(consent.get("features_excluded_at_inference", ())),
+            input_hash=payload.get("input_hash", ""),
+        )
+
     # ------------------------------------------------------- renderings
 
     def render_regulator(self) -> dict:

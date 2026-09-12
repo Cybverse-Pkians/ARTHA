@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from fastapi import APIRouter, HTTPException
 
+from ...audit.log import RecordType
+from ...core.decision import DecisionObject
 from ...core.money import format_inr
 from ...core.types import IncomeType
 from ...language.kfs import build_kfs
@@ -223,16 +227,29 @@ def render(req: RenderRequest) -> dict:
     and the firewall decides whether the customer ever hears it (report §7.7).
     """
     engine = get_engine()
-    records = [
-        r for r in engine.audit.for_customer(req.customer_token)
-        if r.payload.get("decision_id") == req.decision_id
-        or r.payload.get("decision_id") is None and r.record_type.value == "DECISION"
-    ]
-    if not records:
-        raise HTTPException(404, "decision not found in the audit log")
 
-    bundle = engine.decide(req.customer_token, language=req.language, as_of=DEMO_AS_OF)
-    verdict = get_firewall().validate(req.model_text, bundle.decision)
+    # Reconstruct the decision the model was phrasing, from its audit record.
+    #
+    # Re-running `decide()` here would be simpler and wrong twice over: the
+    # numerals would be checked against a ground the model never saw, and a
+    # read-only validation call would mutate state — recording a new decision
+    # and consuming the customer's nudge budget.
+    record = next(
+        (
+            r for r in reversed(engine.audit.for_customer(req.customer_token))
+            if r.record_type is RecordType.DECISION
+            and r.payload.get("decision_id") == req.decision_id
+        ),
+        None,
+    )
+    if record is None:
+        raise HTTPException(404, f"decision {req.decision_id} not found in the audit log")
+
+    decision = DecisionObject.from_regulator_rendering(record.payload)
+    if req.language:
+        decision = replace(decision, language=req.language)
+
+    verdict = get_firewall().validate(req.model_text, decision)
     return {
         "outcome": verdict.outcome.value,
         "allowed": verdict.allowed,
@@ -240,7 +257,7 @@ def render(req: RenderRequest) -> dict:
         "blocked_detail": verdict.blocked_detail,
         "ungrounded_numbers": list(verdict.ungrounded),
         "used_fallback": verdict.used_fallback,
-        "model_context": build_model_context(bundle.decision, req.language or "en"),
+        "model_context": build_model_context(decision, req.language or "en"),
     }
 
 

@@ -112,3 +112,64 @@ def test_recovery_state_transitions_carry_evidence(engine, ingest, as_of):
     if record.state is not RecoveryState.STABLE:
         assert record.history
         assert record.history[-1].reason
+
+
+def test_a_decision_reconstructs_from_its_own_audit_record(engine, ingest, as_of):
+    """The audit trail's central claim, made executable.
+
+    If a decision cannot be rebuilt from its stored record, then "reproducible
+    on demand" is a claim about a database rather than about the system, and a
+    supervisor asking about a refusal from March gets a re-run rather than the
+    original.
+
+    This is also what lets the AI Firewall validate model output against the
+    decision the model was *actually phrasing* rather than a freshly computed
+    one — a check against today's numbers is not a check at all.
+    """
+    from artha.core.decision import DecisionObject
+
+    token = ingest("salaried_stable")
+    original = engine.decide(token, as_of=as_of).decision
+
+    record = next(
+        r for r in engine.audit.of_type(RecordType.DECISION)
+        if r.payload.get("decision_id") == original.decision_id
+    )
+    rebuilt = DecisionObject.from_regulator_rendering(record.payload)
+
+    assert rebuilt.decision_id == original.decision_id
+    assert rebuilt.outcome is original.outcome
+    assert rebuilt.recovery_state is original.recovery_state
+    assert rebuilt.input_hash == original.input_hash
+
+    # The firewall's ground must survive the round trip exactly, or a numeral
+    # that was legitimate when spoken becomes ungrounded when audited.
+    assert rebuilt.numeric_ground() == original.numeric_ground()
+
+    # And so must both renderings.
+    assert rebuilt.render_customer().spoken == original.render_customer().spoken
+    assert (
+        rebuilt.render_regulator()["gate_trace"]
+        == original.render_regulator()["gate_trace"]
+    )
+    assert (
+        rebuilt.render_regulator()["reason_codes"]
+        == original.render_regulator()["reason_codes"]
+    )
+
+
+def test_reconstruction_survives_a_suppressed_decision(engine, ingest, as_of):
+    """Refusals are the decisions most likely to be audited."""
+    from artha.core.decision import DecisionObject
+
+    token = ingest("gig")
+    original = engine.decide(token, as_of=as_of).decision
+    record = next(
+        r for r in engine.audit.of_type(RecordType.DECISION)
+        if r.payload.get("decision_id") == original.decision_id
+    )
+    rebuilt = DecisionObject.from_regulator_rendering(record.payload)
+
+    assert rebuilt.outcome is original.outcome
+    assert rebuilt.numeric_ground() == original.numeric_ground()
+    assert rebuilt.render_customer().headline == original.render_customer().headline

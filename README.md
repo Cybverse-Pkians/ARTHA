@@ -60,10 +60,11 @@ This is at **concept and prototype stage**, matching §11 of the report.
 
 | Component | Verified? |
 |---|---|
-| Engine (ontology, Twin, Gate, Sentinel, ladder, firewall, journey, KFS) | **Yes** — 141 pytest tests pass |
+| Engine (ontology, Twin, Gate, Sentinel, ladder, firewall, journey, KFS) | **Yes** — 143 pytest tests pass |
 | Synthetic generator and income typing across 11 archetypes | **Yes** |
 | React console / customer app | **Syntax-checked only** (25/25 files); not built or run |
-| FastAPI service | **Syntax-checked only**; not started |
+| FastAPI service | **Never started.** 12 route tests written in `tests/test_api.py`, skipped without fastapi |
+| Persistence (`artha/db`) | **Not wired.** Schema written; nothing writes through it |
 
 The development machine had no working Python or Node toolchain, so the test
 suite was executed under **Pyodide** (CPython 3.14 + numpy, compiled to
@@ -82,7 +83,7 @@ cd backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 cp .env.example .env
-pytest -q                       # 141 tests
+pytest -q                       # 143 tests + 12 API tests that need fastapi
 uvicorn artha.main:app --reload # http://127.0.0.1:8000/docs
 ```
 
