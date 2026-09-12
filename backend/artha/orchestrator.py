@@ -35,6 +35,7 @@ from .core.decision import (
     ReasonEntry,
     TwinSummary,
 )
+from .core.asset_class import classify
 from .core.money import format_inr
 from .core.types import (
     CustomerProfile,
@@ -51,7 +52,7 @@ from .engines.moment import Moment, MomentEngine
 from .engines.profitability import ProfitabilityEngine
 from .engines.sentinel import Sentinel, SentinelResult
 from .engines.twin import FinancialTwin, Obligation, TwinResult, TwinVerdict
-from .features.builder import build_profile, write_features
+from .features.builder import build_profile, days_past_due, write_features
 from .features.store import FeatureStore
 from .gate.conduct import DEFAULT_BUDGET, DEFAULT_CALENDAR, EmpathyCalendar, NudgeBudget
 from .gate.fairness import DEFAULT_MONITOR, FairnessMonitor
@@ -509,6 +510,7 @@ class ArthaEngine:
         counterfactual=None,
     ) -> DecisionObject:
         record = self.recovery.get(st.customer_token)
+        dpd = days_past_due(st.profile, st.enriched, as_of=as_of)
         scoped = self.features.scoped_view(st.customer_token, self.consent, as_of=as_of)
         all_reasons = list(reasons if reasons is not None else gate.reasons)
         if moment is not None and not any(r.code == moment.reason_code for r in all_reasons):
@@ -541,6 +543,8 @@ class ArthaEngine:
             gate_trace=gate.trace,
             reasons=tuple(all_reasons),
             recovery_state=record.state,
+            days_past_due=dpd,
+            sma_state=classify(dpd),
             language=lang,
             model_versions=dict(MODEL_VERSIONS),
             consent_purposes_used=tuple(p.value for p in gate.purposes_used),

@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from ..products.catalogue import ProductOffer
 from . import reason_codes as rc
 from .money import format_inr, spoken_inr
+from .asset_class import AssetClassification, SmaState, SupervisoryGap
 from .types import GateOutcome, ProductFamily, RecoveryState
 
 
@@ -135,6 +136,14 @@ class DecisionObject:
     shap: dict[str, float] = field(default_factory=dict)
 
     recovery_state: RecoveryState = RecoveryState.STABLE
+
+    # The supervisory position, carried beside the behavioural one. Both are
+    # on the decision because the system's central claim is about the
+    # distance between them, and a claim about a distance cannot be audited
+    # from one end of it.
+    days_past_due: int = 0
+    sma_state: SmaState = SmaState.STANDARD
+
     language: str = "hi"
     channel: str = "APP"
 
@@ -144,6 +153,21 @@ class DecisionObject:
     consent_purposes_excluded: tuple[str, ...] = field(default_factory=tuple)
     features_excluded: tuple[str, ...] = field(default_factory=tuple)
     input_hash: str = ""
+
+    @property
+    def asset(self) -> AssetClassification:
+        """The supervisory classification implied by this decision's DPD."""
+        return AssetClassification.of(self.days_past_due)
+
+    @property
+    def supervisory_gap(self) -> SupervisoryGap:
+        """How far ahead of the supervisory ladder the behavioural one ran.
+
+        ``acting_early`` is the claim the system is built on; ``missed`` is
+        the case where an account went overdue and the behavioural machinery
+        never moved, which is reported rather than suppressed.
+        """
+        return SupervisoryGap(self.recovery_state.value, self.asset)
 
     # ---------------------------------------------------------------- build
 
@@ -261,6 +285,8 @@ class DecisionObject:
             ),
             shap=dict(payload.get("shap", {})),
             recovery_state=RecoveryState(payload.get("recovery_state", "STABLE")),
+            days_past_due=int(payload.get("days_past_due", 0) or 0),
+            sma_state=SmaState(payload.get("sma_state", "STANDARD")),
             model_versions=dict(payload.get("model_versions", {})),
             policy_version=payload.get("policy_version", "0.1.0"),
             consent_purposes_used=tuple(consent.get("purposes_used", ())),
@@ -287,6 +313,9 @@ class DecisionObject:
             "model_versions": dict(self.model_versions),
             "input_hash": self.input_hash,
             "recovery_state": self.recovery_state.value,
+            "days_past_due": self.days_past_due,
+            "sma_state": self.sma_state.value,
+            "supervisory_gap": self.supervisory_gap.render(),
             "moment": (
                 {
                     "trigger": self.moment.trigger,

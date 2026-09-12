@@ -290,7 +290,16 @@ class SupervisoryGap:
 
     @property
     def missed(self) -> bool:
-        """The account is overdue and the behavioural machinery never moved."""
+        """The account is overdue and the behavioural machinery never moved.
+
+        KNOWN OVER-FIRE: this does not know pay intent, and an account can be
+        overdue by choice. A borrower the Sentinel judged UNWILLING is left
+        STABLE deliberately — report §6.3 separates inability from unwillingness
+        precisely so forbearance is not handed to a strategic default — and such
+        a customer registers here as a miss when the system behaved exactly as
+        designed. Read this metric alongside ``SentinelResult.pay_intent``, and
+        exclude UNWILLING before treating a miss rate as a detection failure.
+        """
         return self.asset.state.is_stressed and self.behavioural_concern == 0
 
     def render(self) -> dict:
