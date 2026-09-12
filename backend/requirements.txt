@@ -1,0 +1,30 @@
+# ARTHA — backend runtime dependencies
+# Table 6 of the report maps each of these to an architectural layer.
+
+# --- API layer -------------------------------------------------------------
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.1
+python-multipart==0.0.20
+
+# --- Numerics / simulation -------------------------------------------------
+numpy==2.2.1                 # Financial Twin Monte-Carlo
+pandas==2.2.3
+scipy==1.15.0                # changepoint + periodicity detection
+
+# --- Models ----------------------------------------------------------------
+scikit-learn==1.6.0          # narration n-gram classifier, income typing, isolation forest
+xgboost==2.1.3               # suitability ranker, PD-uplift
+lightgbm==4.5.0              # challenger model
+shap==0.46.0                 # reason-code attribution
+
+# --- Persistence -----------------------------------------------------------
+SQLAlchemy==2.0.36
+psycopg[binary]==3.2.3       # PostgreSQL operational store
+alembic==1.14.0
+
+# --- Misc ------------------------------------------------------------------
+orjson==3.10.13
+python-dateutil==2.9.0.post0
+httpx==0.28.1                # language-service adapters (Bhashini / AI4Bharat)
