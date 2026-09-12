@@ -55,7 +55,12 @@ from .features.builder import build_profile, write_features
 from .features.store import FeatureStore
 from .gate.conduct import DEFAULT_BUDGET, DEFAULT_CALENDAR, EmpathyCalendar, NudgeBudget
 from .gate.fairness import DEFAULT_MONITOR, FairnessMonitor
-from .gate.recovery import DEFAULT_MACHINE, RecoveryMachine
+from .gate.recovery import (
+    DEFAULT_MACHINE,
+    MIN_DWELL_DAYS,
+    RecoveryMachine,
+    target_state,
+)
 from .gate.suitability_gate import GateDecision, SuitabilityGate
 from .intervention.ladder import DEFAULT_LADDER, InterventionLadder, LadderResult
 from .ontology.enrich import DEFAULT_PIPELINE, EnrichmentPipeline, EnrichmentResult
@@ -97,6 +102,16 @@ class DecisionBundle:
     moments: tuple[Moment, ...] = field(default_factory=tuple)
     privacy_ledger: dict = field(default_factory=dict)
     suppressed_candidates: tuple[dict, ...] = field(default_factory=tuple)
+
+
+#: Ordering of the behavioural states, used to label a transition as an
+#: escalation or a de-escalation in the audit record.
+_CONCERN = {
+    RecoveryState.STABLE: 0,
+    RecoveryState.WATCH: 1,
+    RecoveryState.AT_RISK: 2,
+    RecoveryState.RECOVERY: 3,
+}
 
 
 class ArthaEngine:
@@ -245,11 +260,16 @@ class ArthaEngine:
         )
         self._log_stress_unconditionally(customer_token, sentinel)
 
+        # Evaluated on every decision, not only distressed ones. Running it
+        # inside the distress branch is what made the state machine one-way:
+        # a customer could enter WATCH and never be reconsidered, because the
+        # only code that touched their state required them to still be stressed.
+        self._update_recovery_state(customer_token, sentinel, as_of)
+
         if sentinel.is_fraud:
             return self._fraud_bundle(st, sentinel, lang, as_of)
 
         if sentinel.is_distress and sentinel.pay_intent is not PayIntent.UNWILLING:
-            self._enter_recovery(customer_token, sentinel, as_of)
             return self._assistance_bundle(st, sentinel, baseline_twin, lang, as_of)
 
         # -- 2. Moments -------------------------------------------------------
@@ -559,21 +579,61 @@ class ArthaEngine:
             },
         )
 
-    def _enter_recovery(self, customer_token: str, sentinel: SentinelResult, as_of: date) -> None:
-        target = (
-            RecoveryState.AT_RISK if sentinel.pd_uplift_90d >= 0.05 else RecoveryState.WATCH
-        )
+    def _update_recovery_state(
+        self, customer_token: str, sentinel: SentinelResult, as_of: date
+    ) -> None:
+        """Move the customer up or down the behavioural ladder, or leave them.
+
+        Three things this does that its predecessor did not.
+
+        It gives the machine a **way out**. ``maybe_restore`` had no caller
+        anywhere, so ``STABILISATION_DAYS`` was dead and a customer who entered
+        WATCH stayed there permanently — the module docstring's "reversible
+        state machine" was not reversible in practice.
+
+        It **de-escalates**. The old transition only ever chose between WATCH
+        and AT_RISK; nothing returned anyone to STABLE, so recovery was
+        unobservable however much the indicators improved.
+
+        And it applies **hysteresis and a dwell period**, so a customer sitting
+        near a threshold no longer oscillates, writing an audit record and
+        flickering their offers on and off at every evaluation.
+        """
+        # A plan honoured for long enough restores personalisation on its own.
+        self.recovery.maybe_restore(customer_token, as_of=as_of)
+
         record = self.recovery.get(customer_token)
-        if record.state is target:
+        dwelt = self.recovery.days_in_state(customer_token, as_of=as_of)
+        target = target_state(
+            record.state,
+            sentinel.pd_uplift_90d,
+            dwelt_long_enough=dwelt >= MIN_DWELL_DAYS,
+        )
+        if target is record.state:
             return
+
+        escalating = _CONCERN[target] > _CONCERN[record.state]
         self.recovery.transition(
             customer_token, target,
-            reason=f"Sentinel PD uplift +{sentinel.pd_uplift_90d:.1%} over 90 days",
+            reason=(
+                f"Sentinel PD uplift +{sentinel.pd_uplift_90d:.1%} over 90 days"
+                if escalating
+                else (
+                    f"PD uplift fell to +{sentinel.pd_uplift_90d:.1%} and the "
+                    f"previous state was held {dwelt} days"
+                )
+            ),
             evidence=tuple(sentinel.evidence), at=as_of,
         )
         self.audit.append(
             RecordType.RECOVERY_TRANSITION, customer_token,
-            {"to_state": target.value, "evidence": list(sentinel.evidence)},
+            {
+                "from_state": record.history[-1].from_state.value if record.history else None,
+                "to_state": target.value,
+                "direction": "escalation" if escalating else "de-escalation",
+                "days_in_previous_state": dwelt,
+                "evidence": list(sentinel.evidence),
+            },
         )
 
     def _log_decision(self, decision: DecisionObject) -> None:

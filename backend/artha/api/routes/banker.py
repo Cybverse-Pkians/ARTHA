@@ -291,10 +291,20 @@ def intervention_response(req: InterventionResponseRequest) -> dict:
 
     engine = get_engine()
     if req.accepted:
+        # Accepting starts a plan, and a tracked plan is what RECOVERY *is*.
+        # Logging the acceptance without making this transition is what left
+        # RECOVERY unreachable outside the test suite.
+        record = engine.recovery.accept_plan(req.customer_token, family=req.family)
         engine.audit.append(
-            RecordType.INTERVENTION_ACCEPTED, req.customer_token, {"family": req.family}
+            RecordType.INTERVENTION_ACCEPTED, req.customer_token,
+            {"family": req.family, "recovery_state": record.state.value},
         )
-        return {"recorded": "accepted", "treated_as_risk_signal": False}
+        return {
+            "recorded": "accepted",
+            "treated_as_risk_signal": False,
+            "recovery_state": record.state.value,
+            "plan_started": record.plan_started.isoformat() if record.plan_started else None,
+        }
 
     engine.recovery.record_decline(
         req.customer_token, family=req.family, do_not_ask_again=req.do_not_ask_again

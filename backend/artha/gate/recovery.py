@@ -30,6 +30,20 @@ from ..core.types import RecoveryState
 # How long a customer must honour a plan before personalisation is restored.
 STABILISATION_DAYS = 90
 
+# Entry and exit are deliberately not the same number. A single threshold,
+# re-evaluated on every decision, makes a customer hovering either side of it
+# oscillate between states — each flip writing an audit record and flickering
+# their offers on and off. The exit threshold sits below the entry threshold so
+# a state has to be genuinely left, not merely grazed.
+ENTER_AT_RISK = 0.05
+EXIT_AT_RISK = 0.03
+ENTER_WATCH = 0.02
+EXIT_WATCH = 0.01
+
+# And a state must be held for a minimum period before it can be left at all,
+# so a single quiet day cannot undo a fortnight of deterioration.
+MIN_DWELL_DAYS = 14
+
 
 @dataclass(frozen=True)
 class RecoveryEvent:
@@ -110,6 +124,39 @@ class RecoveryMachine:
             record.offers_declined = 0
         return record
 
+    def days_in_state(self, customer_token: str, *, as_of: date | None = None) -> int:
+        """How long the customer has held their current state.
+
+        A record with no ``since`` has never transitioned, so it has been
+        STABLE indefinitely and is treated as having dwelt long enough.
+        """
+        record = self.get(customer_token)
+        if record.since is None:
+            return MIN_DWELL_DAYS
+        return max(((as_of or date.today()) - record.since).days, 0)
+
+    def accept_plan(
+        self, customer_token: str, *, at: date | None = None, family: str | None = None
+    ) -> RecoveryRecord:
+        """The customer accepted an offer of assistance.
+
+        This is the transition into RECOVERY, and until it existed RECOVERY
+        was unreachable outside the test suite: the only automated path set
+        WATCH or AT_RISK, so the state the Gate calls the defining safeguard
+        of the system was never actually entered by the system.
+
+        Accepting starts a plan and starts the stabilisation clock. It is the
+        one transition a customer makes deliberately, which is why it is not
+        inferred from indicators.
+        """
+        at = at or date.today()
+        return self.transition(
+            customer_token, RecoveryState.RECOVERY,
+            reason="Customer accepted an offer of assistance",
+            evidence=((f"family={family}",) if family else ()),
+            at=at, actor="customer",
+        )
+
     def record_decline(
         self, customer_token: str, *, family: str | None = None, do_not_ask_again: bool = False
     ) -> RecoveryRecord:
@@ -157,6 +204,38 @@ class RecoveryMachine:
             and record.offers_declined >= 1
             and record.state in {RecoveryState.AT_RISK, RecoveryState.RECOVERY}
         )
+
+
+def target_state(
+    current: RecoveryState, uplift: float, *, dwelt_long_enough: bool
+) -> RecoveryState:
+    """The state an uplift implies, given where the customer already is.
+
+    Escalation is immediate — deterioration should not wait out a dwell
+    period. De-escalation requires both that the uplift has fallen below the
+    *exit* threshold and that the state has been held long enough, and it
+    steps down one level at a time rather than jumping to STABLE.
+
+    RECOVERY is not returned and not left here. A customer in RECOVERY is
+    working a plan they accepted, and that plan ends by being honoured
+    (``maybe_restore``) or by being missed — not because indicators moved.
+    """
+    if current is RecoveryState.RECOVERY:
+        return RecoveryState.RECOVERY
+
+    if uplift >= ENTER_AT_RISK:
+        return RecoveryState.AT_RISK
+    if uplift >= ENTER_WATCH and current is RecoveryState.STABLE:
+        return RecoveryState.WATCH
+
+    if not dwelt_long_enough:
+        return current
+
+    if current is RecoveryState.AT_RISK and uplift < EXIT_AT_RISK:
+        return RecoveryState.WATCH
+    if current is RecoveryState.WATCH and uplift < EXIT_WATCH:
+        return RecoveryState.STABLE
+    return current
 
 
 DEFAULT_MACHINE = RecoveryMachine()
