@@ -23,6 +23,16 @@ Where these appear in code they are marked. `intervention/ladder.py` carries a
 `verify_against_circular` flag on every rung, and `language/kfs.py` carries a
 `REGULATORY_NOTE` constant that is returned with every generated statement.
 
+Special Mention Account classification is implemented in `core/asset_class.py`.
+The day bands are reproduced there from secondary understanding, not quoted from
+a circular, and every `AssetClassification` carries the caveat as data so no
+surface can render a classification without it. Deliberately **not** modelled,
+because modelling them badly would be worse than omitting them: provisioning
+percentages, CRILC reporting (which applies at an aggregate-exposure threshold
+retail loans do not reach), NPA sub-classification into doubtful and loss, and
+the upgrade rules for an account already classified as an NPA. Claims about
+those should not be made from this codebase.
+
 ## 2. Every quantitative figure
 
 **Status: illustrative only. Generated from the synthetic dataset. Not measured

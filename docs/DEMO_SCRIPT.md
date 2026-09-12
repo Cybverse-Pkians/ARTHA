@@ -167,12 +167,15 @@ relationship-manager restructuring has ever generated.
 **"How do you know it works?"**
 Not from a model accuracy figure. From a measured reduction in stressed-to-NPA
 conversion and a measured increase in risk-adjusted lifetime profitability
-against a holdout — plus the refusal study, which uses the customers who ignored
+against a holdout — note that the supervisory ladder this is measured on now
+exists in code (`core/asset_class.py`), and every decision carries its asset
+classification beside its behavioural state; the conversion rate itself is not
+yet computed over a cohort — plus the refusal study, which uses the customers who ignored
 us and borrowed elsewhere, visible through bureau and consented AA data. It is a
 natural experiment that requires randomising nobody into harmful credit.
 
 **"What's actually built versus designed?"**
-The engine is built and tested — 116 tests. The ML models named in the report
+The engine is built and tested — 242 tests. The ML models named in the report
 have interfaces and injection points but are not trained; the shipped decision
 path is deterministic rules plus simulation, which is why it is auditable today.
 Every figure is synthetic. See `docs/CLAIMS_REGISTER.md`.

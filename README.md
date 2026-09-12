@@ -60,17 +60,21 @@ This is at **concept and prototype stage**, matching §11 of the report.
 
 | Component | Verified? |
 |---|---|
-| Engine (ontology, Twin, Gate, Sentinel, ladder, firewall, journey, KFS) | **Yes** — 143 pytest tests pass |
+| Engine (ontology, Twin, Gate, Sentinel, ladder, firewall, journey, KFS) | **Yes** — 242 pytest tests pass, natively on CPython 3.14 |
 | Synthetic generator and income typing across 11 archetypes | **Yes** |
 | React console / customer app | **Syntax-checked only** (25/25 files); not built or run |
 | FastAPI service | **Never started.** 12 route tests written in `tests/test_api.py`, skipped without fastapi |
 | Persistence (`artha/db`) | **Not wired.** Schema written; nothing writes through it |
 
-The development machine had no working Python or Node toolchain, so the test
-suite was executed under **Pyodide** (CPython 3.14 + numpy, compiled to
-WebAssembly, in a browser) via `tools/mkpytest.sh`. That is a real interpreter
-running the real suite, but the API and front-end layers have not been run
-end-to-end. Do that first (see below) before demonstrating.
+The suite now runs natively: `python -m pytest -q` in `backend/` gives
+**242 passed, 1 skipped** on CPython 3.14 with `pytest`, `numpy` and
+`pydantic-settings` installed. The Pyodide runner in `tools/mkpytest.sh` is
+retained as a fallback for machines without a Python toolchain, which is what
+the development machine originally had.
+
+Still not run end-to-end: there is no Node toolchain here, so the React console
+and customer app remain syntax-checked only, and the FastAPI service has never
+been started. Do both before demonstrating.
 
 ---
 
@@ -83,7 +87,7 @@ cd backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 cp .env.example .env
-pytest -q                       # 143 tests + 12 API tests that need fastapi
+pytest -q                       # 242 tests + 12 API tests that need fastapi
 uvicorn artha.main:app --reload # http://127.0.0.1:8000/docs
 ```
 
