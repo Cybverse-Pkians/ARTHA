@@ -15,7 +15,7 @@ from ...core.money import format_inr
 from ...engines.sentinel import detect_correlated_stress, rank_for_capacity
 from ...gate.fairness import EXCLUDED_DATA_SOURCES, PERMITTED_ALTERNATE_DATA
 from ...schemas.api import InterventionResponseRequest, OverrideRequest
-from ..deps import DEMO_AS_OF, get_engine
+from ..deps import DEMO_AS_OF, decide_cached, forget_decision, get_engine
 
 router = APIRouter(prefix="/banker", tags=["banker"])
 
@@ -30,8 +30,8 @@ def early_warning_queue(capacity: int | None = None) -> dict:
     capacity = capacity or settings.daily_contact_capacity
 
     assessed = []
-    for token, state in engine._states.items():
-        bundle = engine.decide(token, as_of=DEMO_AS_OF)
+    for token in list(engine._states):
+        bundle = decide_cached(token)
         if bundle.sentinel:
             assessed.append((token, bundle.sentinel))
 
@@ -140,7 +140,7 @@ def suppression_metrics() -> dict:
     suppressed_products: dict[str, int] = {}
 
     for token in list(engine._states):
-        bundle = engine.decide(token, as_of=DEMO_AS_OF)
+        bundle = decide_cached(token)
         outcomes[bundle.decision.outcome.value] += 1
         if bundle.gate.blocking_check:
             blocking[bundle.gate.blocking_check] = blocking.get(bundle.gate.blocking_check, 0) + 1
@@ -179,7 +179,7 @@ def dual_ledger() -> dict:
     interventions = 0
 
     for token in list(engine._states):
-        bundle = engine.decide(token, as_of=DEMO_AS_OF)
+        bundle = decide_cached(token)
         d = bundle.decision
         if d.offer:
             # Customer value: the exposure the Gate declined to extend.
@@ -274,6 +274,7 @@ def override_income_type(req: OverrideRequest) -> dict:
          "reason": req.reason},
         actor=req.actor,
     )
+    forget_decision(req.customer_token)
     return {"customer_token": req.customer_token, "from": before,
             "to": income_type.value, "actor": req.actor}
 
@@ -290,6 +291,7 @@ def intervention_response(req: InterventionResponseRequest) -> dict:
     from ...audit.log import RecordType
 
     engine = get_engine()
+    forget_decision(req.customer_token)
     if req.accepted:
         # Accepting starts a plan, and a tracked plan is what RECOVERY *is*.
         # Logging the acceptance without making this transition is what left

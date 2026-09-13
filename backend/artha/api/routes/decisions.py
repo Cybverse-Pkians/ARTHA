@@ -20,7 +20,16 @@ from ...schemas.api import (
     SeedRequest,
 )
 from ...synth.generator import ARCHETYPES, SyntheticGenerator
-from ..deps import DEMO_AS_OF, get_broker, get_engine, get_firewall, parse_transactions
+from ..deps import (
+    DEMO_AS_OF,
+    decide_cached,
+    decide_live,
+    forget_decision,
+    get_broker,
+    get_engine,
+    get_firewall,
+    parse_transactions,
+)
 
 router = APIRouter(tags=["decisions"])
 
@@ -52,6 +61,7 @@ def ingest(req: IngestRequest) -> dict:
         credit_utilisation=req.credit_utilisation,
         has_term_cover=req.has_term_cover, has_health_cover=req.has_health_cover,
     )
+    forget_decision(req.customer_token)
     return _profile_payload(state)
 
 
@@ -76,6 +86,7 @@ def seed(req: SeedRequest) -> dict:
         district=arch.district, is_rural=arch.is_rural,
         tenure_with_bank_months=36, on_time_emi_streak=14,
     )
+    forget_decision(token)
     payload = _profile_payload(state)
     payload["archetype"] = {"key": req.archetype, "label": arch.label}
     payload["data_provenance"] = "SYNTHETIC — illustrative only (report §11.1)"
@@ -84,16 +95,22 @@ def seed(req: SeedRequest) -> dict:
 
 @router.post("/decide")
 def decide(req: DecideRequest) -> dict:
-    engine = get_engine()
+    what_if = (
+        req.as_of or req.requested_product_id
+        or req.requested_amount_paise or req.missed_payment
+    )
     try:
-        bundle = engine.decide(
+        # The plain decision is language-independent (the customer rendering
+        # below takes the language), so switching customer or language in a
+        # surface reuses it rather than re-running the Twin.
+        bundle = decide_live(
             req.customer_token,
             as_of=req.as_of or DEMO_AS_OF,
             requested_product_id=req.requested_product_id,
             requested_amount_paise=req.requested_amount_paise,
             missed_payment=req.missed_payment,
             language=req.language,
-        )
+        ) if what_if else decide_cached(req.customer_token)
     except KeyError as exc:
         raise HTTPException(404, f"no ingested state for {req.customer_token}") from exc
 

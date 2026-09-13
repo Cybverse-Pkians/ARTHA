@@ -9,6 +9,7 @@ measured results, and a dashboard is the easiest place to blur that line.
 
 from __future__ import annotations
 
+import threading
 from datetime import date, datetime
 from functools import lru_cache
 
@@ -43,6 +44,44 @@ def get_firewall() -> AIFirewall:
 @lru_cache(maxsize=1)
 def get_broker() -> CapabilityBroker:
     return CapabilityBroker()
+
+
+# The banker aggregates (queue, suppression, dual ledger) need a decision for
+# every customer. Re-deciding on each page load re-ran the Twin across the whole
+# book — about ninety seconds for the eleven archetypes — and appended a fresh
+# decision record and fairness observation every time. Decisions are therefore
+# kept per customer, and every route that changes a customer's inputs forgets
+# that customer's entry. The lock also serialises engine.decide across threads.
+_decisions: dict[str, object] = {}
+_decisions_lock = threading.Lock()
+
+
+def decide_cached(customer_token: str):
+    with _decisions_lock:
+        bundle = _decisions.get(customer_token)
+        if bundle is None:
+            bundle = get_engine().decide(customer_token, as_of=DEMO_AS_OF)
+            _decisions[customer_token] = bundle
+        return bundle
+
+
+def decide_live(customer_token: str, **kwargs):
+    """A what-if decision (requested product or amount, missed payment, as_of)."""
+    with _decisions_lock:
+        bundle = get_engine().decide(customer_token, **kwargs)
+        # A what-if can move recovery state the cached bundle predates.
+        _decisions.pop(customer_token, None)
+        return bundle
+
+
+def forget_decision(customer_token: str) -> None:
+    with _decisions_lock:
+        _decisions.pop(customer_token, None)
+
+
+def warm_decisions() -> None:
+    for token in list(get_engine()._states):
+        decide_cached(token)
 
 
 def _bootstrap_demo(engine: ArthaEngine) -> None:

@@ -13,11 +13,29 @@ core banking is required.
 
 from __future__ import annotations
 
+import logging
+import threading
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .api.deps import get_engine, warm_decisions
 from .api.routes import audit, banker, catalogue, decisions, journey
 from .config import settings
+
+log = logging.getLogger("artha")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Seed synchronously so no request can race a second engine into being, then
+    # decide the book off-thread: the banker pages aggregate a decision per
+    # customer and the Twin makes that about ninety seconds cold.
+    get_engine()
+    threading.Thread(target=warm_decisions, name="artha-warm", daemon=True).start()
+    log.info("ARTHA: demo book seeded; warming decisions in the background")
+    yield
 
 DESCRIPTION = """
 A suitability-first lending intelligence layer.
@@ -36,6 +54,7 @@ app = FastAPI(
     version="0.1.0",
     description=DESCRIPTION,
     contact={"name": "Team Wowwsters"},
+    lifespan=lifespan,
 )
 
 # The console and customer app are served separately in development. A bank

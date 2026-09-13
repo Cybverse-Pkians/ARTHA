@@ -19,7 +19,7 @@ from ...schemas.api import (
     PreflightRequest,
     SlotRequest,
 )
-from ..deps import DEMO_AS_OF, get_engine, get_journeys
+from ..deps import DEMO_AS_OF, forget_decision, get_engine, get_journeys
 
 router = APIRouter(prefix="/journey", tags=["journey"])
 
@@ -167,6 +167,7 @@ def set_consent(req: ConsentRequest) -> dict:
         RecordType.CONSENT_CHANGE, req.customer_token,
         {"purpose": purpose.value, "action": action}, actor="customer",
     )
+    forget_decision(req.customer_token)
     return {"purpose": purpose.value, "action": action}
 
 
