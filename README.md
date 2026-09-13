@@ -62,8 +62,8 @@ This is at **concept and prototype stage**, matching §11 of the report.
 |---|---|
 | Engine (ontology, Twin, Gate, Sentinel, ladder, firewall, journey, KFS) | **Yes** — 242 pytest tests pass, natively on CPython 3.14 |
 | Synthetic generator and income typing across 11 archetypes | **Yes** |
-| React console / customer app | **Syntax-checked only** (25/25 files); not built or run |
-| FastAPI service | **Never started.** 12 route tests written in `tests/test_api.py`, skipped without fastapi |
+| React console / customer app | **Yes** — both type-check, build with Vite, and render against the running API |
+| FastAPI service | **Yes** — runs under uvicorn; the 12 route tests in `tests/test_api.py` pass |
 | Persistence (`artha/db`) | **Not wired.** Schema written; nothing writes through it |
 
 The suite now runs natively: `python -m pytest -q` in `backend/` gives
@@ -72,9 +72,14 @@ The suite now runs natively: `python -m pytest -q` in `backend/` gives
 retained as a fallback for machines without a Python toolchain, which is what
 the development machine originally had.
 
-Still not run end-to-end: there is no Node toolchain here, so the React console
-and customer app remain syntax-checked only, and the FastAPI service has never
-been started. Do both before demonstrating.
+With fastapi installed the 12 API tests run too, and pass. On Python 3.14 the
+pinned numpy/pandas/scipy versions in `requirements.txt` may not install; the
+demo machine runs the engine dependencies above plus unpinned `fastapi`,
+`uvicorn[standard]` and `httpx`.
+
+**Start the API a couple of minutes before a demo.** It seeds the archetypes at
+startup and then computes every customer's decision in the background (about
+80 seconds); the console's queue and suppression pages wait on that.
 
 ---
 

@@ -110,9 +110,11 @@ and collections systems.
   despite alembic being a declared dependency. Persisting the audit log is the
   first thing to do before any pilot: a hash chain in memory proves nothing
   after a process dies.
-- **The API and both front-ends have never been executed.** `tests/test_api.py`
-  covers the routes and skips wherever fastapi is unavailable, which is every
-  environment this has run in so far.
+- The API keeps one decision per customer in process memory (`api/deps.py`) so
+  the banker aggregates do not re-run the Twin across the book on every request.
+  Routes that change a customer's inputs forget that customer's entry. Like the
+  rest of engine state it is per-process and must move to a shared store, keyed
+  the same way, before running multi-node.
 - The ML models named in report §7 and §8 (gradient-boosted ranker with uplift,
   PD model, supervised Sentinel classifier, narration n-gram classifier) have
   defined interfaces and injection points but are not trained. The shipped

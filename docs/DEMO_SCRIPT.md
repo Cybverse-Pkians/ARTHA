@@ -4,6 +4,9 @@ Twelve minutes. The order matters: the refusals land harder after the audience
 has seen the system say yes.
 
 Start the backend, the console (`:5173`) and the customer app (`:5174`).
+Start the backend **two minutes early**: it computes every customer's decision
+in the background at startup (about 80 seconds), and the console's queue waits
+on that. Load the console only after the backend is listening, or refresh it.
 
 ---
 
