@@ -76,7 +76,11 @@ Then the line that reframes the machine learning:
 
 ## 4 · The queue nobody else builds (1.5 min) — console → Early-warning queue
 
-Point at the correlated alert.
+Point at the correlated-alerts card. In this eleven-customer synthetic book it
+says the check ran and found **no** shared payroll delay: seven salaried
+customers across six employers, and the four with no salary employer are not
+grouped at all. Say that plainly — the mechanism is what is being shown, and
+the 340-borrower case is exercised in `backend/tests/test_sentinel.py`.
 
 > "A per-customer model sees N independent risky borrowers. Grouping salary
 > timing by employer sees one payroll delay — before any of them has missed a

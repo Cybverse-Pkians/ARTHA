@@ -137,3 +137,18 @@ def test_non_withdrawable_consent_is_refused(client):
         "customer_token": token, "purpose": "FRAUD_MONITORING", "grant": False,
     })
     assert response.status_code == 400
+
+
+def test_customers_without_a_salary_are_not_grouped_as_one_employer(engine, ingest):
+    """Gig and business income has no employer, so no shared payroll to be late.
+
+    These once fell back to a shared placeholder key and surfaced as a
+    five-customer "employer" alert.
+    """
+    from artha.api.routes.banker import _salary_timing
+
+    assert _salary_timing(engine.state(ingest("gig"))) is None
+    assert _salary_timing(engine.state(ingest("business"))) is None
+    employer, delay = _salary_timing(engine.state(ingest("salaried_stable")))
+    assert employer.startswith("p:")
+    assert delay >= 0

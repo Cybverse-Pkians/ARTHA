@@ -88,14 +88,17 @@ def correlated_alerts() -> dict:
     """
     engine = get_engine()
     observations = []
-    for token, state in engine._states.items():
-        p = state.profile
-        if p.income_day_of_month is None:
+    without_employer = 0
+    for token, state in list(engine._states.items()):
+        timing = _salary_timing(state)
+        if timing is None:
+            # No salary credit means no employer and so no shared payroll to be
+            # late together. Grouping these under a placeholder key is what once
+            # reported gig, farm and business customers as one employer.
+            without_employer += 1
             continue
-        # Delay is measured against this customer's own usual arrival day.
-        delay = int(round(p.income_day_dispersion))
-        employer = p.employer_id or _employer_of(state)
-        observations.append((token, employer, delay))
+        employer, delay = timing
+        observations.append((token, state.profile.employer_id or employer, delay))
 
     alerts = detect_correlated_stress(observations, min_cluster=2)
     return {
@@ -109,9 +112,13 @@ def correlated_alerts() -> dict:
             }
             for a in alerts
         ],
+        "employers_checked": len({key for _, key, _ in observations}),
+        "salaried_customers": len(observations),
+        "customers_without_employer": without_employer,
         "note": (
-            "A cluster here is one event, not many. Thresholds are lowered in this "
-            "demo so a small synthetic portfolio produces a visible alert."
+            "A cluster here is one event, not many. Customers with no salary "
+            "employer are not grouped. The cluster threshold is lowered in this "
+            "demo so a small synthetic portfolio can produce an alert."
         ),
         "data_provenance": "SYNTHETIC — illustrative only (report §11.2)",
     }
@@ -326,11 +333,36 @@ def intervention_response(req: InterventionResponseRequest) -> dict:
             "do_not_ask_again": req.do_not_ask_again}
 
 
-def _employer_of(state) -> str:
-    """Best-effort employer key from the dominant salary counterparty."""
+def _salary_timing(state) -> tuple[str, int] | None:
+    """(employer key, days late) from the customer's own salary credits.
+
+    The employer is the counterparty of the latest salary credit. Lateness is
+    that credit's day of month against the median day of the earlier ones — the
+    customer's own usual arrival day — wrapped so a salary landing on the 30th
+    for a usual 1st reads as early rather than 29 days late.
+    """
+    import statistics
+
     from ...core.types import Category, Direction
 
-    for s in state.profile.series:
-        if s.direction is Direction.CREDIT and s.category is Category.SALARY:
-            return s.series_id.split("|")[0]
-    return "unknown"
+    salary = sorted(
+        (e for e in state.enriched
+         if e.direction is Direction.CREDIT and e.category is Category.SALARY),
+        key=lambda e: e.value_date,
+    )
+    if not salary:
+        return None
+    latest = salary[-1]
+    employer = latest.counterparty_key or (
+        latest.series_id.split("|")[0] if latest.series_id else None
+    )
+    if not employer:
+        return None
+
+    usual = statistics.median([e.value_date.day for e in (salary[:-1] or salary)])
+    offset = latest.value_date.day - usual
+    if offset > 15:
+        offset -= 30
+    elif offset < -15:
+        offset += 30
+    return employer, max(0, int(round(offset)))

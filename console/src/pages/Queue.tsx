@@ -8,16 +8,27 @@ import { formatPercent, titleCase } from "../components/format";
 export function Queue({ onSelect }: { onSelect: (token: string) => void }) {
   const [data, setData] = useState<QueueResponse | null>(null);
   const [alerts, setAlerts] = useState<CorrelatedAlert[]>([]);
+  const [checked, setChecked] = useState<{ employers: number; salaried: number; without: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([
       api.get<QueueResponse>("/banker/queue"),
-      api.get<{ alerts: CorrelatedAlert[] }>("/banker/correlated"),
+      api.get<{
+        alerts: CorrelatedAlert[];
+        employers_checked: number;
+        salaried_customers: number;
+        customers_without_employer: number;
+      }>("/banker/correlated"),
     ])
       .then(([q, c]) => {
         setData(q);
         setAlerts(c.alerts);
+        setChecked({
+          employers: c.employers_checked,
+          salaried: c.salaried_customers,
+          without: c.customers_without_employer,
+        });
       })
       .catch((e) => setError(String(e)));
   }, []);
@@ -64,6 +75,17 @@ export function Queue({ onSelect }: { onSelect: (token: string) => void }) {
               </span>
             </div>
           ))}
+        </div>
+      ) : checked ? (
+        // Shown rather than hidden: a check that ran and found nothing is a
+        // result, and hiding it reads as a check that never ran.
+        <div className="card">
+          <h2>Correlated portfolio alerts</h2>
+          <p className="muted small">
+            No shared-employer payroll delay in this book. {checked.salaried} salaried customers
+            across {checked.employers} employers checked; {checked.without} customers have no salary
+            employer and are not grouped.
+          </p>
         </div>
       ) : null}
 
