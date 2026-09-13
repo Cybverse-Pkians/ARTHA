@@ -55,6 +55,12 @@ class Archetype:
 
     key: str
     label: str
+    # A synthetic person's name for the demo surfaces. It is *not* a feature and
+    # never reaches the engine: the orchestrator holds a customer token, the way
+    # it would behind a bank's tokenisation vault (report §9.1). The name exists
+    # so a demonstration can say "Sunita" instead of "tok_recovery_restructured",
+    # and it is invented, like every other figure here.
+    display_name: str
     expected_income_type: IncomeType
     monthly_income: int                 # rupees
     income_day: int
@@ -64,6 +70,17 @@ class Archetype:
     emi: int = 0
     emi_day: int = 5
     emi_months_remaining: int = 24
+    # Arrears overlay. ``emi_missed_instalments`` removes that many scheduled
+    # debits, counting back from the most recent, which is what puts a customer
+    # into an SMA band: one missed instalment is SMA-0, two is SMA-1, three is
+    # SMA-2. ``emi_restructured_instalments`` sits *in front* of the missed run
+    # — the most recent N debits are paid at a reduced amount on a shifted day
+    # under a renamed mandate, which is how a granted restructuring appears in a
+    # transaction feed and why the arrears before it stop ageing.
+    emi_missed_instalments: int = 0
+    emi_restructured_instalments: int = 0
+    emi_restructured: int = 0
+    emi_restructured_day: int = 0
     insurance: int = 0
     telecom: int = 299
     discretionary: int = 0
@@ -80,6 +97,7 @@ class Archetype:
 ARCHETYPES: dict[str, Archetype] = {
     "salaried_stable": Archetype(
         key="salaried_stable", label="Salaried, stable — Tier-2 manufacturing",
+        display_name="Rohan Deshpande",
         expected_income_type=IncomeType.SALARIED_STABLE,
         monthly_income=42_000, income_day=1, income_cv=0.04, opening_balance=58_000,
         rent=9_500, emi=6_200, emi_day=5, emi_months_remaining=8,
@@ -87,6 +105,7 @@ ARCHETYPES: dict[str, Archetype] = {
     ),
     "salaried_volatile": Archetype(
         key="salaried_volatile", label="Salaried, irregular payroll — small employer",
+        display_name="Neha Chouhan",
         expected_income_type=IncomeType.SALARIED_VOLATILE,
         monthly_income=27_000, income_day=7, income_cv=0.34, opening_balance=14_500,
         rent=6_000, emi=4_100, emi_day=3, emi_months_remaining=19,
@@ -94,6 +113,7 @@ ARCHETYPES: dict[str, Archetype] = {
     ),
     "gig": Archetype(
         key="gig", label="Gig worker — delivery platform payouts",
+        display_name="Imran Shaikh",
         expected_income_type=IncomeType.GIG,
         monthly_income=24_000, income_day=0, income_cv=0.38, opening_balance=6_200,
         rent=5_500, emi=3_400, emi_day=10, emi_months_remaining=14,
@@ -102,6 +122,7 @@ ARCHETYPES: dict[str, Archetype] = {
     ),
     "agricultural": Archetype(
         key="agricultural", label="Farmer — sugarcane, harvest-linked income",
+        display_name="Venkata Rao Pothuri",
         expected_income_type=IncomeType.AGRICULTURAL,
         monthly_income=18_000, income_day=20, income_cv=0.55, opening_balance=31_000,
         rent=0, emi=0, insurance=890, telecom=179, discretionary=3_100,
@@ -109,6 +130,7 @@ ARCHETYPES: dict[str, Archetype] = {
     ),
     "business": Archetype(
         key="business", label="Kirana owner — daily receipts",
+        display_name="Shweta Kulkarni",
         expected_income_type=IncomeType.BUSINESS,
         monthly_income=52_000, income_day=0, income_cv=0.45, opening_balance=77_000,
         rent=12_000, emi=9_800, emi_day=15, emi_months_remaining=31,
@@ -116,6 +138,7 @@ ARCHETYPES: dict[str, Archetype] = {
     ),
     "thin_file_woman": Archetype(
         key="thin_file_woman", label="Thin-file borrower — SHG repayment history only",
+        display_name="Kalaivani Murugan",
         expected_income_type=IncomeType.SEASONAL,
         monthly_income=11_500, income_day=12, income_cv=0.40, opening_balance=4_800,
         rent=2_500, emi=0, telecom=155, discretionary=1_400,
@@ -124,6 +147,7 @@ ARCHETYPES: dict[str, Archetype] = {
     ),
     "stressed": Archetype(
         key="stressed", label="Pre-delinquent — EMI date precedes income arrival",
+        display_name="Ranjan Kumar",
         expected_income_type=IncomeType.SALARIED_VOLATILE,
         monthly_income=29_000, income_day=9, income_cv=0.34, opening_balance=3_100,
         rent=8_000, emi=7_900, emi_day=3, emi_months_remaining=22,
@@ -132,6 +156,7 @@ ARCHETYPES: dict[str, Archetype] = {
     ),
     "strategic_defaulter": Archetype(
         key="strategic_defaulter", label="Healthy balance, discretionary spend, missed EMI",
+        display_name="Bhavesh Patel",
         expected_income_type=IncomeType.BUSINESS,
         monthly_income=95_000, income_day=0, income_cv=0.30, opening_balance=210_000,
         rent=0, emi=18_500, emi_day=8, emi_months_remaining=40,
@@ -140,6 +165,7 @@ ARCHETYPES: dict[str, Archetype] = {
     ),
     "scam_victim": Archetype(
         key="scam_victim", label="Elder customer targeted by a social-engineering scam",
+        display_name="Sulochana Joshi",
         expected_income_type=IncomeType.SALARIED_STABLE,
         monthly_income=36_000, income_day=1, income_cv=0.05, opening_balance=182_000,
         rent=0, emi=0, insurance=2_600, discretionary=5_000,
@@ -148,6 +174,7 @@ ARCHETYPES: dict[str, Archetype] = {
     ),
     "injection": Archetype(
         key="injection", label="Prompt-injection narrations in the transaction feed",
+        display_name="Anil Verma",
         expected_income_type=IncomeType.SALARIED_STABLE,
         monthly_income=40_000, income_day=1, income_cv=0.05, opening_balance=45_000,
         rent=8_000, emi=5_000, emi_day=6, discretionary=6_000,
@@ -156,11 +183,70 @@ ARCHETYPES: dict[str, Archetype] = {
     ),
     "high_cost_borrower": Archetype(
         key="high_cost_borrower", label="Paying app lenders — counter-offer candidate",
+        display_name="Dinesh Raja",
         expected_income_type=IncomeType.SALARIED_STABLE,
         monthly_income=31_000, income_day=5, income_cv=0.18, opening_balance=9_400,
         rent=7_000, emi=0, telecom=299, discretionary=6_100,
         dependants=2, age=29, district="Madurai",
         tags=("high_cost",),
+    ),
+
+    # --- arrears ladder ----------------------------------------------------
+    #
+    # Four customers whose instalment feeds differ only in how many recent
+    # debits are absent, so the Special Mention Account bands can be seen
+    # separating on the same underlying profile rather than on four unrelated
+    # ones. Every figure is synthetic (report §11.2), and the band itself is
+    # framing to be verified against the current circular — see
+    # ``engines/delinquency.py``.
+    "sma0_missed_once": Archetype(
+        key="sma0_missed_once", label="Missed the current instalment — SMA-0 band",
+        display_name="Pooja Yadav",
+        expected_income_type=IncomeType.SALARIED_VOLATILE,
+        monthly_income=33_000, income_day=10, income_cv=0.26, opening_balance=6_800,
+        rent=7_500, emi=8_400, emi_day=4, emi_months_remaining=26,
+        insurance=980, discretionary=5_200, dependants=2, age=34, district="Indore",
+        emi_missed_instalments=1,
+        tags=("arrears",),
+    ),
+    "sma1_missed_twice": Archetype(
+        key="sma1_missed_twice", label="Two instalments behind — SMA-1 band",
+        display_name="Sameer Ansari",
+        expected_income_type=IncomeType.GIG,
+        monthly_income=26_500, income_day=0, income_cv=0.36, opening_balance=3_400,
+        rent=6_500, emi=7_100, emi_day=6, emi_months_remaining=30,
+        telecom=239, discretionary=4_300, dependants=2, age=30, district="Surat",
+        thin_file=True,
+        emi_missed_instalments=2,
+        tags=("arrears",),
+    ),
+    "sma2_missed_thrice": Archetype(
+        key="sma2_missed_thrice", label="Three instalments behind — SMA-2 band",
+        display_name="Girish Hegde",
+        expected_income_type=IncomeType.BUSINESS,
+        monthly_income=38_000, income_day=0, income_cv=0.48, opening_balance=2_100,
+        rent=9_000, emi=9_600, emi_day=8, emi_months_remaining=34,
+        insurance=1_150, discretionary=5_800, dependants=3, age=43, district="Hubli",
+        emi_missed_instalments=3,
+        tags=("arrears",),
+    ),
+    "recovery_restructured": Archetype(
+        key="recovery_restructured",
+        label="Restructuring granted — plan being honoured, Recovery Mode active",
+        display_name="Sunita Devi",
+        expected_income_type=IncomeType.SALARIED_VOLATILE,
+        monthly_income=30_000, income_day=9, income_cv=0.30, opening_balance=11_200,
+        rent=7_000, emi=8_900, emi_day=3, emi_months_remaining=36,
+        insurance=1_050, discretionary=4_100, dependants=3, age=37, district="Patna",
+        # Two instalments were missed, then the facility was restructured: a
+        # smaller instalment, moved to after income arrives, which is rung one
+        # of the Intervention Ladder. The three debits since are the plan being
+        # honoured, and they age the account from the new mandate.
+        emi_missed_instalments=2,
+        emi_restructured_instalments=4,
+        emi_restructured=5_400,
+        emi_restructured_day=11,
+        tags=("arrears", "recovery"),
     ),
 }
 
@@ -189,7 +275,13 @@ class SyntheticGenerator:
         token = customer_token or f"tok_{archetype_key}"
         rng = np.random.default_rng(stable_seed(self.seed, archetype_key))
 
-        start = _add_months(end, -months)
+        # Windows are aligned to the first of the month rather than to ``end``'s
+        # day. Anchoring them to the day of the month meant the final, partial
+        # window carried the *previous* month's obligations, so the instalment
+        # due earlier in the current month was never emitted and every
+        # EMI-paying archetype read as one instalment past due before any
+        # arrears overlay was applied.
+        start = _add_months(date(end.year, end.month, 1), -months)
         txns: list[Transaction] = []
         balance = rupees(arch.opening_balance)
         counter = [0]
@@ -217,7 +309,7 @@ class SyntheticGenerator:
         while cursor < end:
             month_end = min(_add_months(cursor, 1), end)
             self._income_for_month(arch, rng, cursor, month_end, employer_name, add)
-            self._obligations_for_month(arch, rng, cursor, month_end, add)
+            self._obligations_for_month(arch, rng, cursor, month_end, add, horizon_end=end)
             self._spending_for_month(arch, rng, cursor, month_end, add)
             cursor = month_end
 
@@ -305,7 +397,9 @@ class SyntheticGenerator:
 
     # -- committed obligations ---------------------------------------------
 
-    def _obligations_for_month(self, arch, rng, start: date, end: date, add) -> None:
+    def _obligations_for_month(
+        self, arch, rng, start: date, end: date, add, *, horizon_end: date
+    ) -> None:
         # Precomputed so the f-strings below do not need nested quotes, which
         # only parse on Python 3.12+ (PEP 701) and this package targets 3.11.
         landlord_id = stable_index(900, arch.key, "landlord") + 100
@@ -321,11 +415,29 @@ class SyntheticGenerator:
                     Channel.UPI, vpa=f"landlord{landlord_id}@{_UPI_BANKS[1]}")
 
         if arch.emi:
-            day = _clamp_day(start, arch.emi_day)
-            if day < end:
-                add(day, -rupees(arch.emi),
-                    f"ACH D- HDFC BANK LTD-EMI LOAN{loan_id}",
-                    Channel.ACH, name="HDFC BANK LTD")
+            # Which instalment is this, counting back from the most recent one?
+            ago = (horizon_end.year - start.year) * 12 + (horizon_end.month - start.month)
+            restructured = arch.emi_restructured_instalments
+            missed_until = restructured + arch.emi_missed_instalments
+
+            if ago < restructured:
+                day = _clamp_day(start, arch.emi_restructured_day or arch.emi_day)
+                if day < end:
+                    # A distinct servicer string, because a restructured facility
+                    # is a new mandate: the ontology keys a counterparty by name,
+                    # so this is what makes the new schedule a separate series
+                    # rather than a volatile continuation of the old one.
+                    add(day, -rupees(arch.emi_restructured or arch.emi),
+                        f"ACH D- HDFC BANK LTD-RESTRUCTURED-EMI LOAN{loan_id}R",
+                        Channel.ACH, name="HDFC BANK LTD-RESTRUCTURED")
+            elif ago < missed_until:
+                pass       # the instalment was never debited — this is the arrears
+            else:
+                day = _clamp_day(start, arch.emi_day)
+                if day < end:
+                    add(day, -rupees(arch.emi),
+                        f"ACH D- HDFC BANK LTD-EMI LOAN{loan_id}",
+                        Channel.ACH, name="HDFC BANK LTD")
 
         if arch.insurance:
             day = _clamp_day(start, 18)

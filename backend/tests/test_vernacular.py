@@ -143,3 +143,71 @@ def test_safety_phrase_is_present_in_every_session():
     banner = session.session_banner()
     assert banner["safety_phrase"]
     assert "OTP" in banner["never_asks"]
+
+
+# --- authored language coverage ---------------------------------------------
+
+
+def test_every_reason_code_is_written_in_every_offered_language():
+    """A missing template is a silent fallback to English on a customer screen.
+
+    The app offers five languages, so a spec that carries fewer is a screen that
+    quietly switches language mid-sentence for whoever picked the missing one.
+    """
+    from artha.core import reason_codes as rc
+
+    offered = {"en", "hi", "mr", "ta", "bn"}
+    missing = {
+        code: sorted(offered - set(spec.templates))
+        for code, spec in rc.all_codes().items()
+        if offered - set(spec.templates)
+    }
+    assert not missing, f"reason codes missing translations: {missing}"
+
+
+def test_translations_use_the_same_placeholders_as_the_english_template():
+    """A renamed placeholder is worse than a missing translation.
+
+    ``ReasonCodeSpec.say`` catches the KeyError and falls back to the *title* —
+    so a mistyped placeholder shows the customer a supervisory heading like
+    "Existing obligation ends within trigger window" instead of a sentence, and
+    nothing raises to say so.
+    """
+    import re
+
+    from artha.core import reason_codes as rc
+
+    def holes(template: str) -> set[str]:
+        return set(re.findall(r"\{(\w+)\}", template))
+
+    mismatched = []
+    for code, spec in rc.all_codes().items():
+        expected = holes(spec.templates.get("en", ""))
+        for lang, template in spec.templates.items():
+            if holes(template) != expected:
+                mismatched.append((code, lang, sorted(expected), sorted(holes(template))))
+    assert not mismatched, f"placeholder mismatches: {mismatched}"
+
+
+def test_the_key_fact_statement_is_written_in_every_offered_language():
+    from artha.language import kfs
+
+    offered = {"en", "hi", "mr", "ta", "bn"}
+    for name, table in (
+        ("labels", kfs._LABELS),
+        ("script", kfs._SCRIPT),
+        ("tenure warning", kfs._TENURE_WARNING),
+        ("cooling off", kfs._COOLING_OFF),
+        ("grievance", kfs._GRIEVANCE),
+    ):
+        assert offered <= set(table), f"{name} missing {sorted(offered - set(table))}"
+
+
+def test_the_twin_speaks_every_offered_language():
+    from artha.engines.twin import TWIN_SENTENCES, twin_sentence
+
+    offered = {"en", "hi", "mr", "ta", "bn"}
+    for key, table in TWIN_SENTENCES.items():
+        assert offered <= set(table), f"twin sentence {key} missing a language"
+    rendered = {twin_sentence("absorbs_one", {}, lang) for lang in offered}
+    assert len(rendered) == len(offered), "a twin sentence fell back to another language"

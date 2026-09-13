@@ -1,6 +1,43 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { t, type Lang } from "../i18n";
+
+/** Minimal shape of the browser speech-recognition API.
+ *
+ * Typed locally rather than pulled from lib.dom: the interface is still vendor
+ * prefixed in most browsers, so the app has to feature-detect it at runtime
+ * anyway and a declaration here keeps that check honest.
+ */
+interface SpeechRecognitionLike {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  maxAlternatives: number;
+  start: () => void;
+  stop: () => void;
+  onresult: ((event: { results: { 0: { 0: { transcript: string }; }; length: number }[] & { [k: number]: { 0: { transcript: string } } } }) => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onend: (() => void) | null;
+}
+
+type RecognitionCtor = new () => SpeechRecognitionLike;
+
+function recognitionCtor(): RecognitionCtor | null {
+  if (typeof window === "undefined") return null;
+  const w = window as unknown as {
+    SpeechRecognition?: RecognitionCtor;
+    webkitSpeechRecognition?: RecognitionCtor;
+  };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
+
+const BCP47: Record<Lang, string> = {
+  hi: "hi-IN",
+  en: "en-IN",
+  mr: "mr-IN",
+  ta: "ta-IN",
+  bn: "bn-IN",
+};
 
 export interface JourneySession {
   session_id: string;
@@ -43,16 +80,30 @@ export function Assistant({
 }) {
   const [utterance, setUtterance] = useState("mujhe ek lakh ka loan chahiye");
   const [listening, setListening] = useState(false);
+  const [sending, setSending] = useState(false);
   const [result, setResult] = useState<SlotResponse | null>(null);
   const [preflight, setPreflight] = useState<PreflightResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const recogniser = useRef<SpeechRecognitionLike | null>(null);
+  const supportsSpeech = recognitionCtor() !== null;
 
-  async function send(confidence: number) {
+  // Stop the microphone if the customer navigates away mid-utterance. A
+  // recogniser left running after its screen is gone keeps the mic indicator
+  // lit, which on a bank app reads as the app listening to you in secret.
+  useEffect(() => () => recogniser.current?.stop(), []);
+
+  async function send(confidence: number, text?: string) {
+    const spoken = (text ?? utterance).trim();
+    if (!spoken) {
+      setError("Say or type what you need first.");
+      return;
+    }
     setError(null);
-    setListening(true);
+    setSending(true);
     try {
       const response = await api.post<SlotResponse>("/journey/slot", {
-        text: utterance,
+        text: spoken,
         asr_confidence: confidence,
         language: lang,
         slot: "AMOUNT",
@@ -68,9 +119,58 @@ export function Assistant({
     } catch (reason) {
       setError(String(reason));
     } finally {
-      setListening(false);
+      setSending(false);
     }
   }
+
+  /** Actually listen, where the browser can.
+   *
+   * The mic button previously re-sent whatever was already typed, so pressing
+   * it looked like nothing happened. Where speech recognition is unavailable
+   * the control now says so and points at the text box instead of pretending.
+   */
+  const toggleListening = useCallback(() => {
+    if (listening) {
+      recogniser.current?.stop();
+      setListening(false);
+      return;
+    }
+    const Ctor = recognitionCtor();
+    if (!Ctor) {
+      setNotice(t(lang, "voice_unsupported"));
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    const recognition = new Ctor();
+    recogniser.current = recognition;
+    recognition.lang = BCP47[lang];
+    recognition.interimResults = false;
+    recognition.continuous = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event) => {
+      const heard = event.results[0]?.[0]?.transcript ?? "";
+      if (heard) {
+        setUtterance(heard);
+        void send(0.93, heard);
+      }
+    };
+    recognition.onerror = (event) => {
+      setListening(false);
+      setNotice(
+        event.error === "not-allowed"
+          ? "Microphone access was declined. Type your request below instead."
+          : t(lang, "voice_unsupported"),
+      );
+    };
+    recognition.onend = () => setListening(false);
+    try {
+      recognition.start();
+      setListening(true);
+    } catch {
+      setNotice(t(lang, "voice_unsupported"));
+    }
+  }, [lang, listening, utterance]);
 
   async function runPreflight() {
     setError(null);
@@ -127,20 +227,26 @@ export function Assistant({
       <div className="voice-grid">
         <section className="voice-card">
           <button
-            className="mic-btn"
+            className={`mic-btn${listening ? " mic-btn-live" : ""}`}
             aria-pressed={listening}
-            aria-label={t(lang, "tap_to_speak")}
-            onClick={() => void send(0.93)}
+            aria-label={listening ? t(lang, "stop_listening") : t(lang, "tap_to_speak")}
+            onClick={toggleListening}
           >
-            <span aria-hidden="true">⌁</span>
+            <span aria-hidden="true">{listening ? "■" : "⌁"}</span>
           </button>
-          <h4>{listening ? t(lang, "listening") : "Tell us what you need"}</h4>
+          <h4>{listening ? t(lang, "listening") : t(lang, "tap_to_speak")}</h4>
           <p>ARTHA understands natural, code-mixed language and reads a large amount back before anything happens.</p>
-          <label className="voice-input-label" htmlFor="utterance">Demo transcript</label>
+          {!supportsSpeech ? <p className="note">{t(lang, "voice_unsupported")}</p> : null}
+          {notice ? <p className="note" role="status">{notice}</p> : null}
+          <label className="voice-input-label" htmlFor="utterance">{t(lang, "voice_demo_transcript")}</label>
           <input id="utterance" value={utterance} onChange={(event) => setUtterance(event.target.value)} />
           <div className="voice-actions">
-            <button className="btn btn-primary" onClick={() => void send(0.93)}>Use this request <span>→</span></button>
-            <button className="link-button" onClick={() => void send(0.45)}>Test a low-confidence line</button>
+            <button className="btn btn-primary" disabled={sending} onClick={() => void send(0.93)}>
+              {t(lang, "voice_use_request")} <span>→</span>
+            </button>
+            <button className="link-button" disabled={sending} onClick={() => void send(0.45)}>
+              {t(lang, "voice_low_confidence")}
+            </button>
           </div>
         </section>
 

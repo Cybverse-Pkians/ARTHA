@@ -150,6 +150,37 @@ class RecoveryState(str, Enum):
     RECOVERY = "RECOVERY"      # suppress all marketing, track plan, human support
 
 
+class SMAStage(str, Enum):
+    """Special Mention Account stage, by days past due on the instalment.
+
+    REGULATORY STATUS: the day bands below are the widely documented SMA
+    framing listed in ``docs/CLAIMS_REGISTER.md`` §1, carried here as *design
+    framing* and to be cited from the current RBI circular before any live use.
+    :data:`artha.engines.delinquency.VERIFY_AGAINST_CIRCULAR` says so in the
+    data itself, the way ``intervention/ladder.py`` does for each rung.
+    """
+
+    STANDARD = "STANDARD"      # nothing overdue
+    SMA_0 = "SMA_0"            # 1–30 days past due
+    SMA_1 = "SMA_1"            # 31–60 days past due
+    SMA_2 = "SMA_2"            # 61–90 days past due
+    NPA = "NPA"                # beyond 90 days past due
+
+    @property
+    def is_flagged(self) -> bool:
+        return self is not SMAStage.STANDARD
+
+    @property
+    def label(self) -> str:
+        return {
+            SMAStage.STANDARD: "Standard",
+            SMAStage.SMA_0: "SMA-0",
+            SMAStage.SMA_1: "SMA-1",
+            SMAStage.SMA_2: "SMA-2",
+            SMAStage.NPA: "NPA",
+        }[self]
+
+
 class SentinelVerdict(str, Enum):
     """Report §6.4 / Figure 7 — the three-way separation that drives routing."""
 
@@ -278,6 +309,12 @@ class CustomerProfile:
     income_type_overridden: bool = False        # a human corrected it — §5.1
     posture: FinancialPosture = FinancialPosture.STEADY
     recovery_state: RecoveryState = RecoveryState.STABLE
+
+    # Delinquency, derived from the instalment series rather than supplied by
+    # the caller — a profile that could be handed an SMA stage from outside
+    # would let the classification and its evidence drift apart.
+    sma_stage: SMAStage = SMAStage.STANDARD
+    days_past_due: int = 0
 
     balance_paise: int = 0
     monthly_income_paise: int = 0

@@ -81,6 +81,7 @@ class SuitabilityGate:
         as_of: date | None = None,
         gender: str | None = None,
         is_assistance: bool = False,
+        customer_initiated: bool = False,
     ) -> GateDecision:
         """Run the Gate.
 
@@ -90,6 +91,17 @@ class SuitabilityGate:
         those exist to stop *selling*, and refusing to offer help to a customer
         in difficulty because their nudge budget is exhausted would invert the
         purpose of the control.
+
+        ``customer_initiated`` marks an answer to a question the customer asked.
+        It relaxes the *frequency* caps and nothing else. The nudge budget and
+        the per-product cooldown govern how often the bank may speak
+        unprompted (report §9.3); applying them to an inbound request means
+        telling someone "we showed you this recently" when they have just asked,
+        which is not restraint, it is a refusal to answer. Every check that
+        protects the customer — eligibility, affordability, Recovery Mode, the
+        empathy calendar, consent, fairness — still runs, and a standing "do not
+        ask me about this again" is still honoured, because that one is the
+        customer's own instruction rather than a cap on the bank.
         """
         as_of = as_of or date.today()
         trace: list[GateCheck] = []
@@ -171,7 +183,10 @@ class SuitabilityGate:
             reasons.append(ReasonEntry(code, weight=1.0))
 
         # -- 4. nudge budget -----------------------------------------------
-        trace.extend(self._conduct_checks(profile, family, record, as_of, reasons, is_assistance))
+        trace.extend(self._conduct_checks(
+            profile, family, record, as_of, reasons,
+            is_assistance=is_assistance, customer_initiated=customer_initiated,
+        ))
 
         # -- 5. empathy calendar -------------------------------------------
         window = self.calendar.active(profile.customer_token, as_of)
@@ -283,7 +298,9 @@ class SuitabilityGate:
         record,
         as_of: date,
         reasons: list[ReasonEntry],
+        *,
         is_assistance: bool,
+        customer_initiated: bool = False,
     ) -> list[GateCheck]:
         token = profile.customer_token
         checks: list[GateCheck] = []
@@ -304,6 +321,17 @@ class SuitabilityGate:
                 "Assistance is exempt from the contact cap; the cap governs selling.",
             ))
             checks.append(GateCheck("product_cooldown", True, "Not applicable to assistance."))
+            return checks
+
+        if customer_initiated:
+            checks.append(GateCheck(
+                "nudge_budget", True,
+                "The customer asked. The contact cap governs unprompted contact, not replies.",
+            ))
+            checks.append(GateCheck(
+                "product_cooldown", True,
+                "The cooldown stops the bank re-offering; it does not stop it answering.",
+            ))
             return checks
 
         remaining = self.budget.remaining(token, as_of)

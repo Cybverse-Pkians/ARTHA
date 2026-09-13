@@ -10,6 +10,7 @@ from ...audit.log import RecordType
 from ...core.decision import DecisionObject
 from ...core.money import format_inr
 from ...core.types import IncomeType
+from ...engines.twin import twin_sentence
 from ...language.kfs import build_kfs
 from ...llm.capability import Capability
 from ...llm.firewall import build_model_context
@@ -104,6 +105,9 @@ def decide(req: DecideRequest) -> dict:
         "decision_id": d.decision_id,
         "outcome": d.outcome.value,
         "recovery_state": d.recovery_state.value,
+        "sma_stage": d.sma_stage.value,
+        "sma_stage_label": d.sma_stage.label,
+        "days_past_due": d.days_past_due,
         "customer": {
             "language": customer.language,
             "headline": customer.headline,
@@ -113,7 +117,7 @@ def decide(req: DecideRequest) -> dict:
             "privacy_note": customer.privacy_note,
         },
         "regulator": d.render_regulator(),
-        "privacy_ledger": bundle.privacy_ledger,
+        "privacy_ledger": bundle.privacy_ledger_in(customer.language),
         "moments": [
             {"trigger": m.trigger, "description": m.description,
              "priority": m.priority, "products": list(m.product_ids)}
@@ -123,6 +127,10 @@ def decide(req: DecideRequest) -> dict:
         "is_adverse_action": d.is_adverse_action,
         "data_provenance": "Figures illustrative; generated from synthetic data (report §11.2)",
     }
+
+    st = engine.state(req.customer_token)
+    if st.delinquency is not None:
+        payload["arrears"] = st.delinquency.as_dict()
 
     if bundle.sentinel:
         s = bundle.sentinel
@@ -199,9 +207,15 @@ def decide(req: DecideRequest) -> dict:
         }
 
     if d.twin:
+        # Rendered here rather than taken from ``sentence_en``: the regulator
+        # trace is written once in English and must not move, but the customer
+        # hears their own language.
         payload["twin"] = {
             "verdict": d.twin.verdict,
-            "sentence": d.twin.sentence_en,
+            "sentence": twin_sentence(
+                d.twin.sentence_key, dict(d.twin.sentence_params), customer.language
+            ),
+            "sentence_en": d.twin.sentence_en,
             "safe_buffer": format_inr(d.twin.safe_buffer_paise),
             "safe_buffer_paise": d.twin.safe_buffer_paise,
             "lowest_projected": format_inr(d.twin.min_balance_p05_paise),
@@ -214,6 +228,8 @@ def decide(req: DecideRequest) -> dict:
             "path_with": list(d.twin.path_with),
             "path_without": list(d.twin.path_without),
             "path_p05": list(d.twin.path_p05),
+            "path_days": list(d.twin.path_days),
+            "horizon_days": d.twin.horizon_days,
         }
 
     return payload
@@ -281,6 +297,9 @@ def _profile_payload(state) -> dict:
         "obligation_to_income": round(p.obligation_to_income, 4),
         "income_day_of_month": p.income_day_of_month,
         "income_day_dispersion": p.income_day_dispersion,
+        "sma_stage": p.sma_stage.value,
+        "sma_stage_label": p.sma_stage.label,
+        "days_past_due": p.days_past_due,
         "unclassified_share": enr.unclassified_share,
         "injection_findings": len(enr.injection_findings),
         "series": [

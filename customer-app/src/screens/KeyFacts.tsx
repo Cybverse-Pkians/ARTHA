@@ -12,17 +12,35 @@ export function KeyFacts({
   lang,
   decision,
   onSpeak,
+  onStartRequest,
 }: {
   lang: Lang;
   decision: DecisionResponse;
   onSpeak: (text: string) => void;
+  onStartRequest: () => void;
 }) {
   const kfs = decision.kfs;
   if (!kfs) {
+    // Reaching this screen with nothing to read used to be a cul-de-sac: one
+    // flat sentence, no explanation of why, and no way onward. Say what a Key
+    // Fact Statement is for, why there is not one, and offer the step that
+    // would produce one.
     return (
       <div className="screen">
         <h1>{t(lang, "key_facts")}</h1>
-        <p className="lede">There is no offer on the table, so there is no statement to read.</p>
+        <div className="surface-card" style={{ marginTop: 12 }}>
+          <h3>{t(lang, "kfs_none_title")}</h3>
+          <p className="lede" style={{ marginBottom: 14 }}>{t(lang, "kfs_none_body")}</p>
+          {decision.customer.counterfactual ? (
+            <div className="refusal" style={{ marginBottom: 14 }}>
+              <div className="refusal-title">{t(lang, "afford_structure_works")}</div>
+              <div className="refusal-body">{decision.customer.counterfactual}</div>
+            </div>
+          ) : null}
+          <button className="btn btn-primary" onClick={onStartRequest}>
+            {t(lang, "kfs_none_action")} <span aria-hidden="true">→</span>
+          </button>
+        </div>
       </div>
     );
   }
@@ -35,7 +53,7 @@ export function KeyFacts({
         🔊 {t(lang, "read_aloud")}
       </button>
 
-      <h2>The numbers</h2>
+      <h2>{t(lang, "kfs_numbers")}</h2>
       {kfs.lines.map((l) => (
         <div className="kfs-row" key={l.key}>
           <span className="kfs-label">{l.label}</span>
@@ -45,13 +63,13 @@ export function KeyFacts({
 
       {kfs.tenure_options.length > 0 ? (
         <>
-          <h2>What a longer tenure really costs</h2>
+          <h2>{t(lang, "kfs_tenure")}</h2>
           <table className="tenure-table">
             <thead>
               <tr>
-                <th>Months</th>
-                <th>Every month</th>
-                <th>Extra in total</th>
+                <th>{t(lang, "kfs_months")}</th>
+                <th>{t(lang, "kfs_every_month")}</th>
+                <th>{t(lang, "kfs_extra")}</th>
               </tr>
             </thead>
             <tbody>
@@ -67,17 +85,11 @@ export function KeyFacts({
               ))}
             </tbody>
           </table>
-          <p className="tenure-warn">
-            A smaller monthly payment is not a smaller loan. The last column is what the extra
-            months cost you.
-          </p>
+          <p className="tenure-warn">{t(lang, "kfs_warn")}</p>
         </>
       ) : null}
 
-      <p className="note" style={{ marginTop: 18 }}>
-        Key Fact Statement content and format must be verified against the current RBI Digital
-        Lending Directions before any live use.
-      </p>
+      <p className="note" style={{ marginTop: 18 }}>{t(lang, "kfs_note")}</p>
     </div>
   );
 }

@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from ..products.catalogue import ProductOffer
 from . import reason_codes as rc
 from .money import format_inr, spoken_inr
-from .types import GateOutcome, ProductFamily, RecoveryState
+from .types import GateOutcome, ProductFamily, RecoveryState, SMAStage
 
 
 @dataclass(frozen=True)
@@ -83,10 +83,16 @@ class TwinSummary:
     shocks_absorbed: int
     first_breach_date: str | None
     sentence_en: str
+    sentence_key: str = "no_room"
+    sentence_params: dict[str, str] = field(default_factory=dict)
     scenarios: tuple[dict, ...] = field(default_factory=tuple)
     path_with: tuple[int, ...] = field(default_factory=tuple)
     path_without: tuple[int, ...] = field(default_factory=tuple)
     path_p05: tuple[int, ...] = field(default_factory=tuple)
+    # The day offset each path point stands for. Travels with the paths so the
+    # chart plots what was simulated rather than assuming an even spread.
+    path_days: tuple[int, ...] = field(default_factory=tuple)
+    horizon_days: int = 0
 
 
 @dataclass(frozen=True)
@@ -135,6 +141,12 @@ class DecisionObject:
     shap: dict[str, float] = field(default_factory=dict)
 
     recovery_state: RecoveryState = RecoveryState.STABLE
+    # The arrears position at the moment of deciding. Carried on the decision
+    # rather than looked up later because a supervisor reading a suppression
+    # needs to see whether the account was flagged when it was taken, not what
+    # the account looks like now.
+    sma_stage: SMAStage = SMAStage.STANDARD
+    days_past_due: int = 0
     language: str = "hi"
     channel: str = "APP"
 
@@ -261,6 +273,8 @@ class DecisionObject:
             ),
             shap=dict(payload.get("shap", {})),
             recovery_state=RecoveryState(payload.get("recovery_state", "STABLE")),
+            sma_stage=SMAStage(payload.get("sma_stage", "STANDARD")),
+            days_past_due=int(payload.get("days_past_due", 0)),
             model_versions=dict(payload.get("model_versions", {})),
             policy_version=payload.get("policy_version", "0.1.0"),
             consent_purposes_used=tuple(consent.get("purposes_used", ())),
@@ -287,6 +301,8 @@ class DecisionObject:
             "model_versions": dict(self.model_versions),
             "input_hash": self.input_hash,
             "recovery_state": self.recovery_state.value,
+            "sma_stage": self.sma_stage.value,
+            "days_past_due": self.days_past_due,
             "moment": (
                 {
                     "trigger": self.moment.trigger,

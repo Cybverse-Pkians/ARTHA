@@ -46,11 +46,19 @@ from .core.types import (
     SentinelVerdict,
     Transaction,
 )
+from .engines import delinquency
+from .engines.delinquency import DelinquencyResult
 from .engines.moment import DEFAULT_ENGINE as MOMENT_ENGINE
 from .engines.moment import Moment, MomentEngine
 from .engines.profitability import ProfitabilityEngine
 from .engines.sentinel import Sentinel, SentinelResult
-from .engines.twin import FinancialTwin, Obligation, TwinResult, TwinVerdict
+from .engines.twin import (
+    FinancialTwin,
+    Obligation,
+    TwinResult,
+    TwinVerdict,
+    path_day_offsets,
+)
 from .features.builder import build_profile, write_features
 from .features.store import FeatureStore
 from .gate.conduct import DEFAULT_BUDGET, DEFAULT_CALENDAR, EmpathyCalendar, NudgeBudget
@@ -80,6 +88,7 @@ class CustomerState:
     enrichment: EnrichmentResult
     transactions: list[Transaction] = field(default_factory=list)
     gender: str | None = None
+    delinquency: DelinquencyResult | None = None
 
     @property
     def enriched(self) -> list[EnrichedTransaction]:
@@ -95,8 +104,18 @@ class DecisionBundle:
     sentinel: SentinelResult | None = None
     ladder: LadderResult | None = None
     moments: tuple[Moment, ...] = field(default_factory=tuple)
+    # Rendered in the language the decision was first taken in. Callers serving
+    # a different language render `privacy_ledger_entry` instead — the entry is
+    # the data, the dict is one rendering of it.
     privacy_ledger: dict = field(default_factory=dict)
+    privacy_ledger_entry: object | None = None
     suppressed_candidates: tuple[dict, ...] = field(default_factory=tuple)
+
+    def privacy_ledger_in(self, lang: str | None) -> dict:
+        """The privacy ledger in one language."""
+        if lang is None or self.privacy_ledger_entry is None:
+            return self.privacy_ledger
+        return self.privacy_ledger_entry.render(lang)
 
 
 class ArthaEngine:
@@ -144,6 +163,7 @@ class ArthaEngine:
             fairness=self.fairness, consent=self.consent,
         )
         self._states: dict[str, CustomerState] = {}
+        self._decisions: dict[tuple, tuple[DecisionBundle, tuple]] = {}
 
     # ---------------------------------------------------------------- ingest
 
@@ -178,9 +198,13 @@ class ArthaEngine:
                 if with_balance else 0
             )
 
+        arrears = delinquency.assess(
+            enrichment.series, enrichment.enriched, as_of=as_of
+        )
+
         profile = build_profile(
             customer_token, enrichment, balance_paise=balance_paise, as_of=as_of,
-            **profile_kwargs,
+            delinquency=arrears, **profile_kwargs,
         )
 
         # Narrations carrying injection payloads are logged as a security event
@@ -206,12 +230,21 @@ class ArthaEngine:
         # report exactly which features would be withheld at inference time.
         write_features(self.features, customer_token, profile, as_of=as_of)
 
+        # An arrears fact is not a prediction, so it moves the customer into
+        # Recovery Mode the moment it is observed rather than waiting for the
+        # next decision. The transition is logged with its own evidence, and it
+        # is a distinct record type from the Sentinel's stress observation —
+        # report §9.4 requires that detection and forbearance stay separable in
+        # the log.
+        self._apply_arrears_state(customer_token, arrears, as_of)
+
         state = CustomerState(
             customer_token=customer_token, profile=profile,
             enrichment=enrichment, transactions=list(transactions),
-            gender=gender,
+            gender=gender, delinquency=arrears,
         )
         self._states[customer_token] = state
+        self.invalidate(customer_token)
         return state
 
     def state(self, customer_token: str) -> CustomerState:
@@ -220,6 +253,21 @@ class ArthaEngine:
         return self._states[customer_token]
 
     # ---------------------------------------------------------------- decide
+
+    def invalidate(self, customer_token: str | None = None) -> None:
+        """Drop cached decisions outright.
+
+        Rarely needed: the cache already notices conduct-state changes through
+        the revision counters, whoever made them. This covers the one thing
+        those counters cannot see — the transaction history itself being
+        re-ingested — and exists as an escape hatch for callers that know they
+        have changed something the counters do not cover.
+        """
+        if customer_token is None:
+            self._decisions.clear()
+            return
+        for key in [k for k in self._decisions if k[0] == customer_token]:
+            del self._decisions[key]
 
     def decide(
         self,
@@ -231,7 +279,64 @@ class ArthaEngine:
         missed_payment: bool = False,
         language: str | None = None,
     ) -> DecisionBundle:
+        """Run the pipeline, or return the decision already reached for it.
+
+        Deciding is *not* idempotent underneath: it consumes the customer's
+        nudge budget, records a fairness observation and writes to the audit
+        log. Without this cache, two page loads of the same console screen were
+        two contacts, the product cooldown then suppressed the offer the second
+        time, and the customer's answer changed because someone had refreshed
+        the browser. Caching the bundle makes a repeated request a read, which
+        is what the surfaces actually mean by asking twice.
+        """
         as_of = as_of or date.today()
+        # Language is deliberately absent from the key. Reading the same
+        # decision in Tamil is not a second decision: keying on it meant a
+        # customer flipping between the five languages spent their whole
+        # monthly nudge budget and was then met with silence — the conduct
+        # control firing on the act of reading. Every language-dependent string
+        # is rendered from the decision at request time instead.
+        key = (
+            customer_token, as_of.isoformat(), requested_product_id,
+            requested_amount_paise, missed_payment,
+        )
+        cached = self._decisions.get(key)
+        if cached is not None and cached[1] == self._conduct_revision(customer_token):
+            return cached[0]
+
+        bundle = self._decide_uncached(
+            customer_token, as_of=as_of,
+            requested_product_id=requested_product_id,
+            requested_amount_paise=requested_amount_paise,
+            missed_payment=missed_payment, language=language,
+        )
+        # Snapshot taken *after* the run, so the decision's own side effects —
+        # the contact it recorded, the Recovery-Mode state it entered — are
+        # part of the baseline rather than immediately invalidating it. Anything
+        # that happens afterwards moves the counters and the entry is dropped.
+        self._decisions[key] = (bundle, self._conduct_revision(customer_token))
+        return bundle
+
+    def _conduct_revision(self, customer_token: str) -> tuple:
+        """Everything outside the transaction history that can change a decision."""
+        return (
+            self.recovery.revisions.of(customer_token),
+            self.budget.revisions.of(customer_token),
+            self.consent.revisions.of(customer_token),
+            self.calendar.revisions.of(customer_token),
+            self.fairness.breach_revision,
+        )
+
+    def _decide_uncached(
+        self,
+        customer_token: str,
+        *,
+        as_of: date,
+        requested_product_id: str | None = None,
+        requested_amount_paise: int | None = None,
+        missed_payment: bool = False,
+        language: str | None = None,
+    ) -> DecisionBundle:
         st = self.state(customer_token)
         profile = st.profile
         lang = language or profile.language
@@ -254,12 +359,37 @@ class ArthaEngine:
 
         # -- 2. Moments -------------------------------------------------------
         moments = self.moment.detect(profile, st.enriched, as_of=as_of)
+
+        # A customer who has asked for a specific amount has supplied the moment,
+        # and it goes to the front of the queue. Two failures otherwise: with no
+        # detected trigger the pipeline stayed silent, answering a question
+        # nobody asked instead of the one that was; and with a trigger detected
+        # it answered the bank's — someone asking for a loan was shown health
+        # cover and a credit card, because those were what the Moment Engine
+        # happened to fire on. Silence and cross-sell are both right answers to
+        # the wrong question when the customer is the one speaking. Everything
+        # below is unchanged: the Twin still sizes it and the Gate can still
+        # refuse.
+        asked = requested_amount_paise is not None or requested_product_id is not None
+        if asked:
+            moments = [self._requested_moment(requested_product_id), *moments]
+
         if not moments:
             return self._silence_bundle(st, sentinel, lang, as_of, moments=())
 
         # -- 3/4. Structure, simulate, gate each candidate --------------------
+        #
+        # When the customer asked, only what they asked about is considered. The
+        # detected moments still ran and are still reported, but they are not
+        # allowed to *answer* — falling through to them meant someone asking for
+        # a ₹1,50,000 loan whose loan products were all on cooldown was offered
+        # a ₹208-a-month recurring deposit instead, which is a cross-sell wearing
+        # the clothes of an answer. A question the bank cannot answer gets the
+        # counterfactual below, which is the honest reply.
+        candidates = moments[:1] if asked else moments
+
         suppressed: list[dict] = []
-        for moment in moments:
+        for moment in candidates:
             product_ids = (
                 (requested_product_id,) if requested_product_id else moment.product_ids
             )
@@ -288,14 +418,15 @@ class ArthaEngine:
                     as_of=as_of,
                 )
                 gate = self.gate.evaluate(
-                    profile, offer, twin=twin, as_of=as_of, gender=st.gender
+                    profile, offer, twin=twin, as_of=as_of, gender=st.gender,
+                    customer_initiated=moment.trigger == "CUSTOMER_REQUEST",
                 )
 
                 if gate.outcome is GateOutcome.ACT:
                     return self._act_bundle(st, offer, twin, gate, moment, sentinel, lang, as_of)
 
                 suppressed.append(self._suppressed_note(
-                    product_id, gate.trace[-1].detail if gate.trace else "",
+                    product_id, self._blocking_detail(gate),
                     blocking=gate.blocking_check,
                 ))
 
@@ -314,12 +445,18 @@ class ArthaEngine:
             st, GateOutcome.ACT, gate, lang, as_of,
             offer=offer, twin=twin, moment=moment,
         )
-        self.budget.record_contact(st.customer_token, offer.product.family.value, as_of)
+        # Answering a question the customer asked does not spend their contact
+        # budget. Counting it would let the bank exhaust the customer's own
+        # allowance on their behalf, and the next thing the *bank* wanted to
+        # raise would be suppressed because the customer had been curious.
+        if moment.trigger != "CUSTOMER_REQUEST":
+            self.budget.record_contact(st.customer_token, offer.product.family.value, as_of)
         self.fairness.record(st.profile, GateOutcome.ACT, gender=st.gender)
         self._log_decision(decision)
+        entry = self._ledger_entry(decision, gate, as_of)
         return DecisionBundle(
             decision=decision, gate=gate, sentinel=sentinel,
-            moments=(moment,), privacy_ledger=self._ledger(decision, gate, lang, as_of),
+            moments=(moment,), privacy_ledger=entry.render(lang), privacy_ledger_entry=entry,
         )
 
     def _counterfactual_bundle(
@@ -363,9 +500,10 @@ class ArthaEngine:
         )
         self.fairness.record(profile, GateOutcome.SUPPRESS, gender=st.gender)
         self._log_decision(decision)
+        entry = self._ledger_entry(decision, gate, as_of)
         return DecisionBundle(
             decision=decision, gate=gate, sentinel=sentinel, moments=tuple(moments),
-            privacy_ledger=self._ledger(decision, gate, lang, as_of),
+            privacy_ledger=entry.render(lang), privacy_ledger_entry=entry,
             suppressed_candidates=tuple(suppressed),
         )
 
@@ -378,9 +516,10 @@ class ArthaEngine:
         )
         self.fairness.record(st.profile, GateOutcome.SUPPRESS, gender=st.gender)
         self._log_decision(decision)
+        entry = self._ledger_entry(decision, gate, as_of)
         return DecisionBundle(
             decision=decision, gate=gate, sentinel=sentinel, moments=moments,
-            privacy_ledger=self._ledger(decision, gate, lang, as_of),
+            privacy_ledger=entry.render(lang), privacy_ledger_entry=entry,
         )
 
     def _fraud_bundle(self, st, sentinel, lang, as_of) -> DecisionBundle:
@@ -405,9 +544,10 @@ class ArthaEngine:
             },
         )
         self._log_decision(decision)
+        entry = self._ledger_entry(decision, gate, as_of)
         return DecisionBundle(
             decision=decision, gate=gate, sentinel=sentinel,
-            privacy_ledger=self._ledger(decision, gate, lang, as_of),
+            privacy_ledger=entry.render(lang), privacy_ledger_entry=entry,
         )
 
     def _assistance_bundle(self, st, sentinel, baseline_twin, lang, as_of) -> DecisionBundle:
@@ -434,10 +574,15 @@ class ArthaEngine:
         gate = self.gate.evaluate(
             profile, None, twin=None, as_of=as_of, gender=st.gender, is_assistance=True
         )
-        reasons = [ReasonEntry(
-            rc.SEN_STRESS_PREDICTED.code, weight=1.0,
-            params={"days": str(sentinel.lead_time_days or 0)},
-        )]
+        # "Due in 0 days" is not something anyone says, and a lead time is not
+        # always projectable, so the two cases get different sentences rather
+        # than one sentence with a hole in it.
+        lead = sentinel.lead_time_days
+        reasons = [
+            ReasonEntry(rc.SEN_STRESS_PREDICTED.code, weight=1.0, params={"days": str(lead)})
+            if lead is not None and lead > 0
+            else ReasonEntry(rc.SEN_STRESS_DUE_NOW.code, weight=1.0)
+        ]
         if ladder and ladder.recommended:
             reasons.append(ReasonEntry(
                 ladder.recommended.reason_code, weight=0.95,
@@ -469,9 +614,10 @@ class ArthaEngine:
 
         self.fairness.record(profile, GateOutcome.PROTECT, gender=st.gender)
         self._log_decision(decision)
+        entry = self._ledger_entry(decision, gate, as_of)
         return DecisionBundle(
             decision=decision, gate=gate, sentinel=sentinel, ladder=ladder,
-            privacy_ledger=self._ledger(decision, gate, lang, as_of),
+            privacy_ledger=entry.render(lang), privacy_ledger_entry=entry,
         )
 
     # -------------------------------------------------------------- helpers
@@ -517,6 +663,8 @@ class ArthaEngine:
             gate_trace=gate.trace,
             reasons=tuple(all_reasons),
             recovery_state=record.state,
+            sma_stage=st.profile.sma_stage,
+            days_past_due=st.profile.days_past_due,
             language=lang,
             model_versions=dict(MODEL_VERSIONS),
             consent_purposes_used=tuple(p.value for p in gate.purposes_used),
@@ -555,21 +703,101 @@ class ArthaEngine:
             },
         )
 
+    @staticmethod
+    def _requested_moment(requested_product_id: str | None) -> Moment:
+        """The moment a customer creates by asking.
+
+        Carries its own reason code so the trace says the request came from the
+        customer. That distinction matters downstream: an offer the bank
+        initiated and an answer to a question the customer asked are different
+        conduct events even when the product is identical.
+        """
+        from .core.types import ProductFamily
+
+        return Moment(
+            trigger="CUSTOMER_REQUEST",
+            description="The customer asked for a specific amount.",
+            product_ids=(requested_product_id,) if requested_product_id else (
+                "pl_standard", "gold_loan", "od_deposit",
+            ),
+            family=ProductFamily.LOAN,
+            priority=1.0,
+            reason_code=rc.MOM_CUSTOMER_REQUEST.code,
+        )
+
+    def _escalate_recovery(
+        self,
+        customer_token: str,
+        target: RecoveryState,
+        *,
+        reason: str,
+        evidence: tuple[str, ...],
+        at: date,
+        extra: dict | None = None,
+    ) -> bool:
+        """Move a customer *up* the Recovery-Mode ladder, never down.
+
+        The only way out of Recovery Mode is
+        :meth:`RecoveryMachine.maybe_restore`, which requires a plan honoured for
+        the full stabilisation period. Without that rule a fresh Sentinel reading
+        would quietly drop a customer with a tracked restructuring plan back to
+        AT_RISK, discarding the plan's state and the evidence that granted it —
+        every reassessment would undo the previous one.
+        """
+        ranking = {
+            RecoveryState.STABLE: 0, RecoveryState.WATCH: 1,
+            RecoveryState.AT_RISK: 2, RecoveryState.RECOVERY: 3,
+        }
+        record = self.recovery.get(customer_token)
+        if ranking[target] <= ranking[record.state]:
+            return False
+
+        self.recovery.transition(
+            customer_token, target, reason=reason, evidence=evidence, at=at
+        )
+        self.audit.append(
+            RecordType.RECOVERY_TRANSITION, customer_token,
+            {"to_state": target.value, "evidence": list(evidence), **(extra or {})},
+        )
+        return True
+
+    def _apply_arrears_state(
+        self, customer_token: str, arrears: DelinquencyResult, as_of: date
+    ) -> None:
+        """Move an account in arrears into the Recovery-Mode state it requires.
+
+        A standard account returns ``None`` from
+        :attr:`DelinquencyResult.recovery_state` and is left where it is, so a
+        customer the Sentinel has placed under WATCH is not quietly restored to
+        STABLE merely because no instalment is currently overdue.
+        """
+        target = arrears.recovery_state
+        if target is None:
+            return
+        self._escalate_recovery(
+            customer_token, target,
+            reason=(
+                f"{arrears.stage.label}: {arrears.days_past_due} days past due on "
+                f"{arrears.missed_instalments} instalment(s)"
+            ),
+            evidence=arrears.evidence, at=as_of,
+            extra={
+                "trigger": "ARREARS",
+                "sma_stage": arrears.stage.value,
+                "days_past_due": arrears.days_past_due,
+                "verify_against_circular": arrears.verify_against_circular,
+            },
+        )
+
     def _enter_recovery(self, customer_token: str, sentinel: SentinelResult, as_of: date) -> None:
         target = (
             RecoveryState.AT_RISK if sentinel.pd_uplift_90d >= 0.05 else RecoveryState.WATCH
         )
-        record = self.recovery.get(customer_token)
-        if record.state is target:
-            return
-        self.recovery.transition(
+        self._escalate_recovery(
             customer_token, target,
             reason=f"Sentinel PD uplift +{sentinel.pd_uplift_90d:.1%} over 90 days",
             evidence=tuple(sentinel.evidence), at=as_of,
-        )
-        self.audit.append(
-            RecordType.RECOVERY_TRANSITION, customer_token,
-            {"to_state": target.value, "evidence": list(sentinel.evidence)},
+            extra={"trigger": "SENTINEL", "pd_uplift_90d": sentinel.pd_uplift_90d},
         )
 
     def _log_decision(self, decision: DecisionObject) -> None:
@@ -577,15 +805,28 @@ class ArthaEngine:
             RecordType.DECISION, decision.customer_token, decision.render_regulator()
         )
 
-    def _ledger(self, decision, gate, lang, as_of) -> dict:
-        entry = build_ledger_entry(
+    def _ledger_entry(self, decision, gate, as_of):
+        return build_ledger_entry(
             self.consent,
             decision_id=decision.decision_id,
             customer_token=decision.customer_token,
             purposes_used=set(gate.purposes_used),
-            as_of=as_of, lang=lang,
+            as_of=as_of, lang=decision.language,
         )
-        return entry.render(lang)
+
+    @staticmethod
+    def _blocking_detail(gate: GateDecision) -> str:
+        """Why this candidate was suppressed, from the check that suppressed it.
+
+        Taking the last trace entry instead reported whichever check happened to
+        run last — so "what we are not offering, and why" showed customers the
+        text of a check that *passed*, most often "All fairness slices within
+        tolerance", as the reason they were refused.
+        """
+        failed = next((c for c in gate.trace if not c.passed), None)
+        if failed is not None:
+            return failed.detail
+        return gate.trace[-1].detail if gate.trace else ""
 
     @staticmethod
     def _suppressed_note(product_id: str, detail: str, blocking: str | None = None) -> dict:
@@ -605,6 +846,8 @@ def _summarise_twin(twin: TwinResult) -> TwinSummary:
         shocks_absorbed=twin.shocks_absorbed,
         first_breach_date=twin.first_breach_date.isoformat() if twin.first_breach_date else None,
         sentence_en=twin.sentence_en,
+        sentence_key=twin.sentence_key,
+        sentence_params=dict(twin.sentence_params),
         scenarios=tuple(
             {
                 "key": s.key, "label": s.label, "passed": s.passed,
@@ -616,4 +859,6 @@ def _summarise_twin(twin: TwinResult) -> TwinSummary:
         path_with=twin.median_path_with,
         path_without=twin.median_path_without,
         path_p05=twin.p05_path_with,
+        path_days=path_day_offsets(twin.horizon_days),
+        horizon_days=twin.horizon_days,
     )

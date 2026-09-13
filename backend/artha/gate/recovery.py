@@ -25,6 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from ..core.revision import RevisionCounter
 from ..core.types import RecoveryState
 
 # How long a customer must honour a plan before personalisation is restored.
@@ -75,6 +76,9 @@ class RecoveryMachine:
 
     def __init__(self) -> None:
         self._records: dict[str, RecoveryRecord] = {}
+        # Bumped on every state change so a cached decision for this customer
+        # can be recognised as stale however the change was made.
+        self.revisions = RevisionCounter()
 
     def get(self, customer_token: str) -> RecoveryRecord:
         return self._records.setdefault(
@@ -99,6 +103,7 @@ class RecoveryMachine:
         record.history.append(
             RecoveryEvent(at, record.state, to_state, reason, evidence, actor)
         )
+        self.revisions.bump(customer_token)
         record.state = to_state
         record.since = at
         if to_state is RecoveryState.RECOVERY:
@@ -123,12 +128,14 @@ class RecoveryMachine:
         record.offers_declined += 1
         if do_not_ask_again and family:
             record.do_not_contact_families.add(family)
+        self.revisions.bump(customer_token)
         return record
 
     def record_missed_commitment(self, customer_token: str, at: date | None = None) -> None:
         """Reset the stabilisation clock without changing state."""
         record = self.get(customer_token)
         record.plan_honoured_since = at or date.today()
+        self.revisions.bump(customer_token)
 
     def maybe_restore(self, customer_token: str, *, as_of: date | None = None) -> RecoveryRecord:
         """Return to STABLE once a plan has been honoured for the defined period.

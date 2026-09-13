@@ -44,6 +44,11 @@ from ..ontology.income_type import buffer_multiplier
 
 DAYS_PER_MONTH = 30.44
 
+# Scenario key prefix for the stacked-shock runs. They share the caching and
+# obligation arithmetic of the named shocks, but they are not one of them — a
+# stacked run removes income events rather than applying a scenario.
+_STACK_PREFIX = "stack"
+
 
 class TwinVerdict(str, Enum):
     AFFORDABLE = "AFFORDABLE"        # base case and every tested shock clear the buffer
@@ -77,6 +82,110 @@ SHOCKS: tuple[Shock, ...] = (
     Shock("medical", "Unplanned medical expense", "one medical emergency"),
     Shock("festival", "Festival spending spike", "one festival month"),
 )
+
+
+# The Twin's plain-language output, by case, in every language the customer app
+# offers. Held as templates keyed by case rather than as a formatted string so
+# the sentence can be rendered in the customer's language at request time —
+# ``sentence_en`` stays on the result for the regulator trace, which is written
+# once and must not move.
+TWIN_SENTENCES: dict[str, dict[str, str]] = {
+    "breach": {
+        "en": "Your balance would fall below your safety buffer around {month}.",
+        "hi": "{month} के आसपास आपका बैलेंस आपके सुरक्षा बफ़र से नीचे चला जाएगा।",
+        "mr": "{month} च्या सुमारास तुमची शिल्लक सुरक्षा राखीवाच्या खाली जाईल.",
+        "ta": "{month} வாக்கில் உங்கள் இருப்பு பாதுகாப்பு நிலைக்குக் கீழே செல்லும்.",
+        "bn": "{month} নাগাদ আপনার ব্যালান্স নিরাপত্তা সঞ্চয়ের নিচে নেমে যাবে।",
+    },
+    "fragile": {
+        "en": "You could manage this month to month, but not if there were {hint}.",
+        "hi": "आप इसे महीने-दर-महीने संभाल लेंगे, लेकिन {hint} होने पर नहीं।",
+        "mr": "तुम्ही हे महिन्या-महिन्याने पेलू शकाल, पण {hint} झाल्यास नाही.",
+        "ta": "மாதம் மாதம் இதைச் சமாளிக்க முடியும், ஆனால் {hint} ஏற்பட்டால் முடியாது.",
+        "bn": "মাসে মাসে আপনি এটা সামলাতে পারবেন, তবে {hint} হলে নয়।",
+    },
+    "absorbs_two": {
+        "en": "You can absorb two late payments of income and still stay above your buffer.",
+        "hi": "आप आमदनी में दो बार की देरी झेल सकते हैं और फिर भी अपने बफ़र से ऊपर रहेंगे।",
+        "mr": "तुम्ही उत्पन्नात दोनदा उशीर पेलू शकता आणि तरीही राखीवाच्या वर राहाल.",
+        "ta": "வருமானத்தில் இரண்டு தாமதங்களைத் தாங்கியும் உங்கள் பாதுகாப்பு நிலைக்கு மேலே இருப்பீர்கள்.",
+        "bn": "আয়ে দুবার দেরি হলেও আপনি সামলাতে পারবেন এবং নিরাপত্তা সঞ্চয়ের উপরে থাকবেন।",
+    },
+    "absorbs_one": {
+        "en": "You can absorb one delayed salary, but not two.",
+        "hi": "आप एक बार की देरी झेल सकते हैं, दो बार की नहीं।",
+        "mr": "तुम्ही एकदा उशीर पेलू शकता, दोनदा नाही.",
+        "ta": "ஒரு தாமதமான சம்பளத்தைத் தாங்க முடியும், இரண்டை அல்ல.",
+        "bn": "একবার বেতন দেরি হলে সামলাতে পারবেন, দুবার নয়।",
+    },
+    "no_room": {
+        "en": "This stays within your buffer, but there is no room for a surprise.",
+        "hi": "यह आपके बफ़र के भीतर रहता है, पर किसी अचानक ख़र्च की गुंजाइश नहीं है।",
+        "mr": "हे तुमच्या राखीवाच्या आत राहते, पण अनपेक्षित खर्चाला जागा नाही.",
+        "ta": "இது உங்கள் பாதுகாப்பு நிலைக்குள் இருக்கிறது, ஆனால் எதிர்பாராத செலவுக்கு இடமில்லை.",
+        "bn": "এটি আপনার নিরাপত্তা সঞ্চয়ের মধ্যেই থাকে, তবে অপ্রত্যাশিত খরচের জায়গা নেই।",
+    },
+}
+
+# How each shock is named aloud. The English strings match the ``customer_label``
+# on SHOCKS; the rest are the same phrase in the other four languages.
+SHOCK_PHRASES: dict[str, dict[str, str]] = {
+    "income_delay": {
+        "en": "one late salary", "hi": "एक बार वेतन देर से आना",
+        "mr": "एकदा पगार उशिरा येणे", "ta": "ஒரு முறை சம்பளம் தாமதமாவது",
+        "bn": "একবার বেতন দেরিতে আসা",
+    },
+    "missed_income": {
+        "en": "one missed month of work", "hi": "एक महीने का काम छूट जाना",
+        "mr": "एक महिन्याचे काम चुकणे", "ta": "ஒரு மாத வேலை தவறுவது",
+        "bn": "এক মাসের কাজ ফসকে যাওয়া",
+    },
+    "medical": {
+        "en": "one medical emergency", "hi": "एक चिकित्सा आपात स्थिति",
+        "mr": "एक वैद्यकीय आणीबाणी", "ta": "ஒரு மருத்துவ அவசரம்",
+        "bn": "একটি চিকিৎসা জরুরি অবস্থা",
+    },
+    "festival": {
+        "en": "one festival month", "hi": "एक त्योहार का महीना",
+        "mr": "एक सणाचा महिना", "ta": "ஒரு பண்டிகை மாதம்",
+        "bn": "একটি উৎসবের মাস",
+    },
+    "unexpected": {
+        "en": "an unexpected expense", "hi": "कोई अचानक ख़र्च",
+        "mr": "अनपेक्षित खर्च", "ta": "எதிர்பாராத செலவு",
+        "bn": "অপ্রত্যাশিত খরচ",
+    },
+}
+
+_MONTHS: dict[str, tuple[str, ...]] = {
+    "en": ("January", "February", "March", "April", "May", "June",
+           "July", "August", "September", "October", "November", "December"),
+    "hi": ("जनवरी", "फ़रवरी", "मार्च", "अप्रैल", "मई", "जून",
+           "जुलाई", "अगस्त", "सितंबर", "अक्तूबर", "नवंबर", "दिसंबर"),
+    "mr": ("जानेवारी", "फेब्रुवारी", "मार्च", "एप्रिल", "मे", "जून",
+           "जुलै", "ऑगस्ट", "सप्टेंबर", "ऑक्टोबर", "नोव्हेंबर", "डिसेंबर"),
+    "ta": ("ஜனவரி", "பிப்ரவரி", "மார்ச்", "ஏப்ரல்", "மே", "ஜூன்",
+           "ஜூலை", "ஆகஸ்ட்", "செப்டம்பர்", "அக்டோபர்", "நவம்பர்", "டிசம்பர்"),
+    "bn": ("জানুয়ারি", "ফেব্রুয়ারি", "মার্চ", "এপ্রিল", "মে", "জুন",
+           "জুলাই", "আগস্ট", "সেপ্টেম্বর", "অক্টোবর", "নভেম্বর", "ডিসেম্বর"),
+}
+
+
+def twin_sentence(key: str, params: dict[str, str], lang: str = "en") -> str:
+    """Render the Twin's plain-language verdict in one language."""
+    case = TWIN_SENTENCES.get(key) or TWIN_SENTENCES["no_room"]
+    template = case.get(lang) or case["en"]
+    resolved = dict(params)
+    if "month_index" in resolved:
+        months = _MONTHS.get(lang) or _MONTHS["en"]
+        resolved["month"] = months[int(resolved["month_index"]) - 1]
+    if "shock" in resolved:
+        phrases = SHOCK_PHRASES.get(resolved["shock"]) or SHOCK_PHRASES["unexpected"]
+        resolved["hint"] = phrases.get(lang) or phrases["en"]
+    try:
+        return template.format(**resolved)
+    except (KeyError, IndexError):
+        return (TWIN_SENTENCES["no_room"].get(lang) or TWIN_SENTENCES["no_room"]["en"])
 
 
 @dataclass(frozen=True)
@@ -119,6 +228,10 @@ class TwinResult:
     p95_path_with: tuple[int, ...] = field(default_factory=tuple)
 
     sentence_en: str = ""
+    # The same sentence as a case key plus parameters, so the surfaces can render
+    # it in the customer's language without re-deriving which case applied.
+    sentence_key: str = "no_room"
+    sentence_params: dict[str, str] = field(default_factory=dict)
     paths: int = 0
     seed: int = 0
 
@@ -172,6 +285,18 @@ class FinancialTwin:
         self.breach_ceiling = (
             breach_ceiling if breach_ceiling is not None else settings.breach_probability_ceiling
         )
+        # Simulated balances *before* any candidate obligation, by (profile,
+        # as_of, scenario). The draws are already deterministic in the seed, so
+        # reusing them changes no result — it removes the repeated work of
+        # redrawing the same numbers. That matters because the counterfactual
+        # search re-simulates the customer once per bisection, and the customer
+        # is the expensive half: only the obligation differs between trials.
+        #
+        # Deliberately small. Each entry is a paths x horizon matrix of floats,
+        # and one customer's full search touches the base case, one entry per
+        # shock and one per stacked-shock depth — which is what this holds.
+        self._base_cache: dict[tuple, np.ndarray] = {}
+        self._base_cache_limit = 12
 
     # -- public API ---------------------------------------------------------
 
@@ -217,6 +342,9 @@ class FinancialTwin:
 
         absorbed = self._shocks_absorbed(profile, obligation, as_of, safe_buffer)
         resilience = self._resilience(base_breach, scenarios, absorbed)
+        sentence_key, sentence_params = self._sentence(
+            verdict, absorbed, scenarios, first_breach_day, as_of
+        )
 
         return TwinResult(
             verdict=verdict,
@@ -234,10 +362,49 @@ class FinancialTwin:
             median_path_without=_quantile_path(without, 0.50),
             p05_path_with=_quantile_path(with_ob, 0.05),
             p95_path_with=_quantile_path(with_ob, 0.95),
-            sentence_en=self._sentence(verdict, absorbed, scenarios, first_breach_day, as_of),
+            sentence_en=twin_sentence(sentence_key, sentence_params, "en"),
+            sentence_key=sentence_key,
+            sentence_params=sentence_params,
             paths=self.paths,
             seed=self.seed,
         )
+
+    def verdict_for(
+        self,
+        profile: CustomerProfile,
+        obligation: Obligation | None,
+        *,
+        as_of: date | None = None,
+        safe_buffer: int | None = None,
+    ) -> TwinVerdict:
+        """The verdict alone, for callers searching over candidate structures.
+
+        Identical arithmetic to :meth:`simulate`, minus the two things a search
+        never looks at: the percentile paths the chart renders, and the stacked
+        shock depth behind the resilience score. Both are per-candidate sorts
+        over the whole path matrix, and the counterfactual search discards every
+        candidate but one.
+        """
+        as_of = as_of or date.today()
+        buffer_paise = (
+            safe_buffer if safe_buffer is not None else self.safe_buffer_paise(profile)
+        )
+
+        base_breach, _, _ = self._assess(
+            self._run(profile, obligation, as_of, scenario=None), buffer_paise
+        )
+        if base_breach > self.breach_ceiling:
+            return TwinVerdict.UNAFFORDABLE
+
+        for shock in SHOCKS:
+            if not self._shock_applies(shock, profile):
+                continue
+            breach, _, _ = self._assess(
+                self._run(profile, obligation, as_of, scenario=shock.key), buffer_paise
+            )
+            if breach > self.breach_ceiling:
+                return TwinVerdict.FRAGILE
+        return TwinVerdict.AFFORDABLE
 
     def safe_buffer_paise(self, profile: CustomerProfile) -> int:
         """The customer's minimum safe buffer.
@@ -284,6 +451,7 @@ class FinancialTwin:
         annual_rate = rate if rate is not None else requested.annual_rate
         day = preferred_day or requested.day_of_month
         requested_principal = requested.principal_paise or _implied_principal(requested)
+        safe_buffer = self.safe_buffer_paise(profile)
 
         best: Counterfactual | None = None
 
@@ -300,8 +468,10 @@ class FinancialTwin:
                     label=requested.label, emi_paise=emi, day_of_month=day,
                     tenure_months=tenure, principal_paise=mid, annual_rate=annual_rate,
                 )
-                result = self.simulate(profile, trial, as_of=as_of)
-                if result.verdict is TwinVerdict.AFFORDABLE:
+                verdict = self.verdict_for(
+                    profile, trial, as_of=as_of, safe_buffer=safe_buffer
+                )
+                if verdict is TwinVerdict.AFFORDABLE:
                     found, found_emi = mid, emi
                     lo = mid
                 else:
@@ -372,6 +542,25 @@ class FinancialTwin:
         scenario: str | None,
     ) -> np.ndarray:
         """Return a [paths, horizon] matrix of end-of-day balances, in paise."""
+        base = self._base_paths(profile, as_of, scenario)
+        if obligation is None or obligation.emi_paise <= 0:
+            return base
+        return base - self._obligation_drawdown(obligation, as_of)
+
+    def _base_paths(
+        self, profile: CustomerProfile, as_of: date, scenario: str | None
+    ) -> np.ndarray:
+        """Balances with no candidate obligation, for one scenario.
+
+        Cached, and returned read-only: every caller subtracts an obligation to
+        make its own array, and a caller that mutated this one in place would
+        silently corrupt every later trial in the same search.
+        """
+        key = (profile, as_of, scenario)
+        hit = self._base_cache.get(key)
+        if hit is not None:
+            return hit
+
         T, P = self.horizon_days, self.paths
         # Seed is derived from customer and scenario so that scenarios are
         # independent but the whole result stays reproducible.
@@ -379,14 +568,40 @@ class FinancialTwin:
             stable_seed(self.seed, profile.customer_token, scenario or "base")
         )
 
-        inflow = self._income_matrix(rng, profile, as_of, T, P, scenario)
-        outflow = self._outflow_matrix(rng, profile, as_of, T, P, scenario)
+        if scenario is not None and scenario.startswith(_STACK_PREFIX):
+            paths = self._stacked_base(
+                rng, profile, as_of, T, P, int(scenario[len(_STACK_PREFIX):])
+            )
+        else:
+            inflow = self._income_matrix(rng, profile, as_of, T, P, scenario)
+            outflow = self._outflow_matrix(rng, profile, as_of, T, P, scenario)
+            paths = float(profile.balance_paise) + np.cumsum(inflow - outflow, axis=1)
 
-        if obligation is not None and obligation.emi_paise > 0:
-            outflow += self._obligation_matrix(obligation, as_of, T, P)
+        paths.flags.writeable = False
+        if len(self._base_cache) >= self._base_cache_limit:
+            self._base_cache.pop(next(iter(self._base_cache)))
+        self._base_cache[key] = paths
+        return paths
 
-        net = inflow - outflow
-        return float(profile.balance_paise) + np.cumsum(net, axis=1)
+    def _obligation_drawdown(self, obligation: Obligation, as_of: date) -> np.ndarray:
+        """Cumulative instalments paid by each day, as a [horizon] vector.
+
+        One dimension rather than two: the repayment schedule is the same on
+        every simulated path, so carrying a copy of it per path was only ever
+        paying for the broadcast up front.
+        """
+        T = self.horizon_days
+        out = np.zeros(T, dtype=float)
+        first = obligation.first_due or _next_day_of_month(as_of, obligation.day_of_month)
+        offset = (first - as_of).days
+        month = 0
+        while offset < T and month < obligation.tenure_months:
+            if offset >= 0:
+                out[int(offset)] += float(obligation.emi_paise)
+            month += 1
+            nxt = _add_months(first, month)
+            offset = (nxt - as_of).days
+        return np.cumsum(out)
 
     def _income_matrix(
         self, rng, profile: CustomerProfile, as_of: date, T: int, P: int, scenario: str | None
@@ -476,19 +691,6 @@ class FinancialTwin:
 
         return out
 
-    @staticmethod
-    def _obligation_matrix(obligation: Obligation, as_of: date, T: int, P: int) -> np.ndarray:
-        out = np.zeros((P, T), dtype=float)
-        first = obligation.first_due or _next_day_of_month(as_of, obligation.day_of_month)
-        offset = (first - as_of).days
-        month = 0
-        while offset < T and month < obligation.tenure_months:
-            out[:, int(offset)] += float(obligation.emi_paise)
-            month += 1
-            nxt = _add_months(first, month)
-            offset = (nxt - as_of).days
-        return out
-
     # -- assessment ---------------------------------------------------------
 
     def _assess(self, balances: np.ndarray, safe_buffer: int) -> tuple[float, int | None, float]:
@@ -538,10 +740,11 @@ class FinancialTwin:
     def _run_stacked(
         self, profile: CustomerProfile, obligation: Obligation | None, as_of: date, n_shocks: int
     ) -> np.ndarray:
-        T, P = self.horizon_days, self.paths
-        rng = np.random.default_rng(
-            stable_seed(self.seed, profile.customer_token, f"stack{n_shocks}")
-        )
+        return self._run(profile, obligation, as_of, scenario=f"{_STACK_PREFIX}{n_shocks}")
+
+    def _stacked_base(
+        self, rng, profile: CustomerProfile, as_of: date, T: int, P: int, n_shocks: int
+    ) -> np.ndarray:
         inflow = self._income_matrix(rng, profile, as_of, T, P, scenario=None)
 
         # Remove the first n income events outright: the cleanest way to express
@@ -550,8 +753,6 @@ class FinancialTwin:
         inflow = np.where(cumulative <= n_shocks, 0.0, inflow)
 
         outflow = self._outflow_matrix(rng, profile, as_of, T, P, scenario=None)
-        if obligation is not None and obligation.emi_paise > 0:
-            outflow += self._obligation_matrix(obligation, as_of, T, P)
         return float(profile.balance_paise) + np.cumsum(inflow - outflow, axis=1)
 
     @staticmethod
@@ -573,19 +774,24 @@ class FinancialTwin:
         scenarios: list[ScenarioResult],
         first_breach_day: int | None,
         as_of: date,
-    ) -> str:
+    ) -> tuple[str, dict[str, str]]:
+        """Which sentence applies, and what fills it in.
+
+        Returns the case rather than the prose so the same verdict can be spoken
+        in any of the supported languages without this method — the one place
+        that decides *what* is true — needing to know which one.
+        """
         if verdict is TwinVerdict.UNAFFORDABLE and first_breach_day is not None:
-            month = (as_of + timedelta(days=first_breach_day)).strftime("%B")
-            return f"Your balance would fall below your safety buffer around {month}."
+            breach = as_of + timedelta(days=first_breach_day)
+            return "breach", {"month_index": str(breach.month)}
         if verdict is TwinVerdict.FRAGILE:
             failed = next((s for s in scenarios if not s.passed), None)
-            hint = failed.label.lower() if failed else "an unexpected expense"
-            return f"You could manage this month to month, but not if there were {hint}."
+            return "fragile", {"shock": failed.key if failed else "unexpected"}
         if absorbed >= 2:
-            return "You can absorb two late payments of income and still stay above your buffer."
+            return "absorbs_two", {}
         if absorbed == 1:
-            return "You can absorb one delayed salary, but not two."
-        return "This stays within your buffer, but there is no room for a surprise."
+            return "absorbs_one", {}
+        return "no_room", {}
 
 
 # --- helpers ----------------------------------------------------------------
@@ -642,15 +848,38 @@ def _implied_principal(obligation: Obligation) -> int:
     return obligation.emi_paise * max(obligation.tenure_months, 1)
 
 
+def path_day_offsets(horizon_days: int) -> tuple[int, ...]:
+    """The day each down-sampled chart point actually stands for.
+
+    Sent alongside the paths because the chart cannot infer it. Sampling every
+    ``step`` days and then spreading the points evenly across the horizon is
+    off by up to a whole step at the right-hand end: with a 180-day horizon the
+    final point is day 174 and the axis labelled it 180, so every reading the
+    customer took off the chart was wrong by up to a week — and the customer is
+    consenting to this picture.
+    """
+    return tuple(_sample_indices(horizon_days))
+
+
+def _sample_indices(length: int) -> list[int]:
+    step = max(1, length // 26)
+    idx = list(range(0, length, step))
+    # Always carry the last day. Without it the series stops short of the
+    # horizon it claims to cover, which is the difference between a projection
+    # to six months and a projection to five and a half.
+    if idx[-1] != length - 1:
+        idx.append(length - 1)
+    return idx
+
+
 def _quantile_path(balances: np.ndarray, q: float) -> tuple[int, ...]:
-    """Down-sample a path to weekly points for transport to the UI.
+    """Down-sample a path to roughly weekly points for transport to the UI.
 
     180 daily points per series is more than any chart renders usefully and more
     than a feature-phone session should carry.
     """
     path = np.percentile(balances, q * 100, axis=0)
-    step = max(1, len(path) // 26)
-    return tuple(int(v) for v in path[::step])
+    return tuple(int(path[i]) for i in _sample_indices(len(path)))
 
 
 def describe(result: TwinResult, lang: str = "en") -> dict[str, str]:

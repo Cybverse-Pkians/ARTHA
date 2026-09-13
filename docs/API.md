@@ -65,6 +65,8 @@ excluded at inference time.
 |---|---|
 | `GET /banker/queue` | Ranked at the bank's actual daily contact capacity, not at a score threshold. `excluded` lists customers for whom contact changes nothing |
 | `GET /banker/correlated` | Employer-level payroll delay clusters. The demo lowers the cluster threshold so a small synthetic portfolio produces a visible alert |
+| `GET /banker/arrears` | The book by Special Mention Account stage, with days past due and the evidence per account. Read-only: it runs no decision, so opening it cannot change what any customer is offered |
+| `POST /banker/demo/reset` | Rebuilds the seeded demo portfolio. Demo affordance only — it discards contact history, Recovery-Mode records and the audit log, which no deployment would do |
 | `GET /banker/fairness` | Benefit distribution by slice, plus the published exclusion list |
 | `GET /banker/suppression` | Suppressions as a success metric, and which constraint blocked each offer |
 | `GET /banker/dual-ledger` | Customer benefit and bank value, from the same decision log |

@@ -82,3 +82,41 @@ prose.
   auditable today.
 - That the system has detected a single real instance of fraud or distress.
 - That any figure shown has been validated against a real portfolio.
+
+## 5. Synthetic customers, their names and their flags
+
+**Status: invented. Every customer, name, balance and arrears position below is
+generated, and none corresponds to a person.**
+
+The demo portfolio seeds fifteen customers from `synth/generator.py`. Four exist
+to make the Special Mention Account bands visible on otherwise ordinary
+profiles:
+
+| Customer | Stage | Days past due | Recovery Mode |
+|---|---|---|---|
+| Pooja Yadav | SMA-0 | 1–30 | AT_RISK — options offered as a service |
+| Sameer Ansari | SMA-1 | 31–60 | RECOVERY — selling suppressed, plan tracked |
+| Girish Hegde | SMA-2 | 61–90 | RECOVERY |
+| Sunita Devi | Standard | 0 | RECOVERY — restructuring granted, plan honoured |
+
+The names are presentation only. They live in the demo bootstrap
+(`api/deps.py`), never on the profile, so the engine continues to decide about a
+customer *token* the way it would behind a bank's tokenisation vault (§9.1).
+
+The banding itself is the framing listed in §1 of this register and is
+implemented in `engines/delinquency.py`, which carries
+`VERIFY_AGAINST_CIRCULAR` on every result. Two treatments in particular are
+flagged rather than assumed:
+
+- the day bands apply to term loans; revolving facilities are classified on
+  continuous excess over the sanctioned limit, which is not modelled;
+- a restructured account is aged from its **new** mandate, so the arrears the
+  restructuring resolved stop counting. Re-ageing and upgrade after
+  restructuring are governed by specific rules that must be read before this is
+  presented as a compliant classification.
+
+Sunita Devi's Recovery-Mode state is seeded directly by the demo bootstrap,
+because "a plan granted earlier and honoured since" cannot be expressed through
+arrears alone — the account is current under its new mandate, which is exactly
+why its classification reads standard. That seeding is labelled as such in the
+audit record it writes.

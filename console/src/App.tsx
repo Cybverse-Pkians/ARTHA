@@ -1,14 +1,16 @@
 import { useState } from "react";
+import { Arrears } from "./pages/Arrears";
 import { Audit } from "./pages/Audit";
 import { Explain } from "./pages/Explain";
 import { Fairness } from "./pages/Fairness";
 import { Queue } from "./pages/Queue";
 import { Suppression } from "./pages/Suppression";
 
-type Page = "queue" | "explain" | "suppression" | "fairness" | "audit";
+type Page = "queue" | "arrears" | "explain" | "suppression" | "fairness" | "audit";
 
 const NAV: { id: Page; label: string }[] = [
   { id: "queue", label: "Early-warning queue" },
+  { id: "arrears", label: "Arrears & SMA" },
   { id: "explain", label: "Decision explainability" },
   { id: "suppression", label: "Suppression & ledger" },
   { id: "fairness", label: "Fairness" },
@@ -46,6 +48,7 @@ export default function App() {
       </nav>
       <main className="main">
         {page === "queue" ? <Queue onSelect={openCustomer} /> : null}
+        {page === "arrears" ? <Arrears onSelect={openCustomer} /> : null}
         {page === "explain" ? <Explain token={token} onSelect={setToken} /> : null}
         {page === "suppression" ? <Suppression /> : null}
         {page === "fairness" ? <Fairness /> : null}

@@ -29,6 +29,7 @@ export const api = {
 
 export interface QueueRow {
   customer_token: string;
+  name: string;
   verdict: string;
   pd_uplift_90d: number;
   lead_time_days: number | null;
@@ -38,6 +39,10 @@ export interface QueueRow {
   income_type: string;
   district: string;
   balance: string;
+  sma_stage: string;
+  sma_stage_label: string;
+  days_past_due: number;
+  recovery_state: string;
 }
 
 export interface QueueResponse {
@@ -47,7 +52,7 @@ export interface QueueResponse {
   excluded_as_unactionable: number;
   note: string;
   queue: QueueRow[];
-  excluded: { customer_token: string; verdict: string; reason: string }[];
+  excluded: { customer_token: string; name: string; verdict: string; reason: string }[];
   data_provenance: string;
 }
 
@@ -99,12 +104,34 @@ export interface TwinPayload {
   path_with: number[];
   path_without: number[];
   path_p05: number[];
+  /** Day offset of each sampled point — the chart plots against these. */
+  path_days: number[];
+  horizon_days: number;
+}
+
+export interface ArrearsPayload {
+  stage: string;
+  stage_label: string;
+  days_past_due: number;
+  missed_instalments: number;
+  overdue_amount: string;
+  overdue_amount_paise: number;
+  oldest_unpaid_due: string | null;
+  last_payment_on: string | null;
+  instalment: string;
+  mandate_series_id: string | null;
+  evidence: string[];
+  verify_against_circular: boolean;
 }
 
 export interface DecisionResponse {
   decision_id: string;
   outcome: string;
   recovery_state: string;
+  sma_stage: string;
+  sma_stage_label: string;
+  days_past_due: number;
+  arrears?: ArrearsPayload;
   customer: {
     language: string;
     headline: string;
@@ -197,10 +224,19 @@ export interface DecisionResponse {
 
 export interface CustomerRow {
   customer_token: string;
+  /** Synthetic person's name, supplied by the demo bootstrap. */
+  name: string;
+  /** Human-readable archetype label, supplied by the demo bootstrap. */
+  label: string;
+  tags: string[];
   income_type: string;
   income_type_confidence: number;
   posture: string;
   recovery_state: string;
+  sma_stage: string;
+  sma_stage_label: string;
+  days_past_due: number;
+  arrears: ArrearsPayload | null;
   balance: string;
   monthly_income: string;
   district: string;

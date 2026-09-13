@@ -225,3 +225,37 @@ pre.json {
   padding: 11px; overflow-x: auto; font-family: var(--mono); font-size: 11.5px;
   color: var(--text-secondary); max-height: 420px;
 }
+
+/* --- Arrears / SMA --------------------------------------------------------- */
+
+.sma-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 8px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 600; line-height: 1.7; white-space: nowrap;
+  border: 1px solid transparent;
+}
+.sma-standard { color: var(--text-secondary); border-color: var(--border-strong); background: var(--surface-2); }
+.sma-sma_0 { color: #8a6200; border-color: #fab21966; background: #fab21914; }
+.sma-sma_1 { color: #a2522c; border-color: #ec835a66; background: #ec835a14; }
+.sma-sma_2 { color: #a92e2e; border-color: #d03b3b66; background: #d03b3b14; }
+.sma-npa { color: #fff; border-color: #8e2433; background: #8e2433; }
+
+.sma-bars { display: grid; gap: 8px; }
+.sma-bar-row {
+  display: grid; align-items: center; gap: 10px;
+  grid-template-columns: 84px 1fr 34px 170px;
+}
+.sma-bar-track {
+  height: 9px; border-radius: 999px; background: var(--surface-2); overflow: hidden;
+}
+.sma-bar-fill { display: block; height: 100%; border-radius: 999px; transition: width .4s ease; }
+.sma-fill-standard { background: #94a8c8; }
+.sma-fill-sma_0 { background: #fab219; }
+.sma-fill-sma_1 { background: #ec835a; }
+.sma-fill-sma_2 { background: #d03b3b; }
+.sma-fill-npa { background: #8e2433; }
+.sma-bar-count { font-variant-numeric: tabular-nums; font-weight: 600; }
+@media (max-width: 720px) {
+  .sma-bar-row { grid-template-columns: 78px 1fr 30px; }
+  .sma-bar-band { display: none; }
+}

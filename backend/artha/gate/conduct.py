@@ -15,6 +15,7 @@ from datetime import date, timedelta
 from enum import Enum
 
 from ..config import settings
+from ..core.revision import RevisionCounter
 
 
 @dataclass
@@ -39,6 +40,7 @@ class NudgeBudget:
         self.per_month = per_month or settings.nudge_budget_per_month
         self.cooldown_days = cooldown_days or settings.product_cooldown_days
         self._records: dict[str, ContactRecord] = {}
+        self.revisions = RevisionCounter()
 
     def get(self, customer_token: str) -> ContactRecord:
         return self._records.setdefault(
@@ -63,6 +65,7 @@ class NudgeBudget:
 
     def record_contact(self, customer_token: str, family: str, as_of: date) -> None:
         self.get(customer_token).contacts.append((as_of, family))
+        self.revisions.bump(customer_token)
 
 
 class LifeEvent(str, Enum):
@@ -96,6 +99,7 @@ class EmpathyCalendar:
 
     def __init__(self) -> None:
         self._windows: dict[str, list[EmpathyWindow]] = {}
+        self.revisions = RevisionCounter()
 
     def add(
         self,
@@ -108,6 +112,7 @@ class EmpathyCalendar:
     ) -> EmpathyWindow:
         window = EmpathyWindow(event, start, start + timedelta(days=days), evidence)
         self._windows.setdefault(customer_token, []).append(window)
+        self.revisions.bump(customer_token)
         return window
 
     def active(self, customer_token: str, as_of: date) -> EmpathyWindow | None:

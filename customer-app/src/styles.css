@@ -348,3 +348,185 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .kyc-card .btn { width: 100%; }
   .site-footer { align-items: flex-start; flex-direction: column; gap: 5px; padding: 17px 18px; }
 }
+
+/* --- Affordability explainer, loan request, action feedback ---------------- */
+
+.explainer-grid {
+  display: grid; gap: 12px; margin: 14px 0 18px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+.explainer-card {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: white; padding: 16px 17px;
+  box-shadow: 0 7px 18px rgba(12, 50, 118, .035);
+}
+.explainer-card h3 { margin: 6px 0 8px; font-size: 16px; }
+.explainer-card p { margin: 0; font-size: 14px; line-height: 1.62; color: var(--text-secondary); }
+.explainer-list { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.62; color: var(--text-secondary); }
+.explainer-list li + li { margin-top: 6px; }
+
+.verdict-card {
+  margin: 16px 0 8px; padding: 17px 18px; border-radius: var(--radius);
+  border: 1px solid var(--border); border-left-width: 4px; background: white;
+}
+.verdict-card h3 { margin: 6px 0 8px; font-size: 17px; }
+.verdict-card p { margin: 0 0 12px; color: var(--text-secondary); font-size: 14px; line-height: 1.6; }
+.verdict-affordable { border-left-color: var(--good); }
+.verdict-fragile { border-left-color: #bd7712; }
+.verdict-unaffordable { border-left-color: var(--critical); }
+.verdict-figures { display: flex; flex-wrap: wrap; gap: 20px; }
+.verdict-figures span { display: block; font-size: 12px; color: var(--text-muted); }
+.verdict-figures strong { font-size: 17px; }
+
+.request-card { margin-bottom: 16px; }
+.request-form { margin-top: 12px; }
+.request-form label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.request-input-row { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; }
+.request-prefix {
+  display: flex; align-items: center; padding: 0 10px; font-weight: 600;
+  border: 1px solid var(--border); border-right: none; border-radius: 9px 0 0 9px;
+  background: var(--surface-2, #f4f7fc);
+}
+.request-input-row input {
+  flex: 1 1 160px; min-width: 0; padding: 11px 12px; font-size: 16px;
+  border: 1px solid var(--border); border-radius: 0 9px 9px 0;
+  font-variant-numeric: tabular-nums;
+}
+.request-input-row .btn { flex: 0 0 auto; }
+.request-active {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-top: 10px; font-size: 14px; color: var(--text-secondary);
+}
+
+.action-ack {
+  margin: 12px 0 0; padding: 11px 13px; border-radius: 9px;
+  background: rgba(20, 131, 93, .08); border: 1px solid rgba(20, 131, 93, .25);
+  font-size: 14px; line-height: 1.55;
+}
+.language-note { margin: 0 0 14px; }
+
+.hero-arrears { display: flex; align-items: center; gap: 9px; margin-top: 12px; flex-wrap: wrap; }
+.hero-arrears small { opacity: .85; }
+
+button.provenance-chip { cursor: pointer; font: inherit; }
+button.provenance-chip:hover { border-color: var(--border-strong, #94a8c8); }
+
+.mic-btn-live { animation: mic-pulse 1.4s ease-in-out infinite; }
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, .45); }
+  50% { box-shadow: 0 0 0 12px rgba(255, 255, 255, 0); }
+}
+
+@media (max-width: 560px) {
+  .request-input-row input { border-radius: 0 9px 9px 0; }
+  .request-input-row .btn { flex: 1 1 100%; }
+}
+
+/* --- Scenario picker ------------------------------------------------------ */
+
+.scenario-picker { flex: 1 1 520px; min-width: 0; }
+.scenario-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.scenario-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.scenario-filter {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: white;
+  font: inherit; font-size: 12.5px; font-weight: 600; color: var(--text-secondary);
+  transition: background .16s ease, border-color .16s ease, color .16s ease;
+}
+.scenario-filter:hover:not(:disabled) { border-color: var(--border-strong, #94a8c8); }
+.scenario-filter:disabled { opacity: .45; cursor: not-allowed; }
+.scenario-filter-on { background: var(--brand, #14357f); border-color: var(--brand, #14357f); color: white; }
+.scenario-count {
+  font-size: 11px; font-variant-numeric: tabular-nums;
+  padding: 0 6px; border-radius: 999px; background: rgba(0, 0, 0, .08);
+}
+.scenario-filter-on .scenario-count { background: rgba(255, 255, 255, .22); }
+.scenario-hint { margin: 8px 0 10px; font-size: 12.5px; color: var(--text-muted); }
+
+.scenario-chips {
+  display: grid; gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(224px, 1fr));
+  max-height: 268px; overflow-y: auto; padding-right: 4px;
+}
+.scenario-chip {
+  display: flex; flex-direction: column; gap: 5px; text-align: left;
+  padding: 10px 12px; border-radius: 11px; cursor: pointer;
+  border: 1px solid var(--border); background: white; font: inherit;
+  transition: transform .14s ease, border-color .14s ease, box-shadow .14s ease;
+}
+.scenario-chip:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: var(--border-strong, #94a8c8);
+  box-shadow: 0 6px 16px rgba(12, 50, 118, .07);
+}
+.scenario-chip:disabled { opacity: .5; cursor: progress; }
+.scenario-chip-on {
+  border-color: var(--brand, #14357f); box-shadow: 0 0 0 2px rgba(20, 53, 127, .14);
+}
+.scenario-chip-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.scenario-chip-name { font-size: 13px; font-weight: 650; line-height: 1.35; }
+.scenario-chip-meta { font-size: 11.5px; color: var(--text-muted); text-transform: capitalize; }
+.scenario-chip-arrears { font-size: 11.5px; font-weight: 600; color: #a92e2e; }
+.scenario-tag {
+  color: white; font-size: 10px; font-weight: 700; letter-spacing: .02em;
+  padding: 2px 7px; border-radius: 999px; white-space: nowrap; text-transform: uppercase;
+}
+
+/* --- Dynamic feedback ----------------------------------------------------- */
+
+.fade-in { animation: fade-in .26s ease both; }
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+.decision-busy {
+  position: relative; overflow: hidden; height: 3px; border-radius: 999px;
+  background: rgba(20, 53, 127, .1); margin-bottom: 14px;
+}
+.decision-busy::after {
+  content: ""; position: absolute; inset: 0 auto 0 0; width: 38%;
+  background: var(--brand, #14357f); border-radius: 999px;
+  animation: busy-sweep 1.1s ease-in-out infinite;
+}
+@keyframes busy-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(320%); }
+}
+
+.skeleton-card {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: white; padding: 18px; display: grid; gap: 11px;
+}
+.skeleton-line {
+  height: 12px; border-radius: 6px;
+  background: linear-gradient(90deg, #eef2f8 25%, #e2e9f4 37%, #eef2f8 63%);
+  background-size: 400% 100%; animation: shimmer 1.4s ease infinite;
+}
+.skeleton-line-lg { height: 22px; width: 62%; }
+.skeleton-line-sm { width: 40%; }
+@keyframes shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-in, .decision-busy::after, .skeleton-line, .mic-btn-live { animation: none; }
+  .scenario-chip:hover:not(:disabled) { transform: none; }
+}
+
+@media (max-width: 700px) {
+  .scenario-chips { grid-template-columns: 1fr; max-height: 220px; }
+}
+
+.scenario-chip-role { font-size: 11.5px; color: var(--text-secondary); line-height: 1.35; }
+
+/* The demo reset sits inside muted hint text, where the shared link colour is
+   too low-contrast to read. Give it its own weight rather than lightening the
+   hint, which needs to stay recessive. */
+.scenario-hint .link-button {
+  color: var(--brand, #14357f); font-weight: 650; text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.scenario-hint .link-button:disabled { opacity: .45; }

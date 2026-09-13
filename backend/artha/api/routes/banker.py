@@ -15,7 +15,7 @@ from ...core.money import format_inr
 from ...engines.sentinel import detect_correlated_stress, rank_for_capacity
 from ...gate.fairness import EXCLUDED_DATA_SOURCES, PERMITTED_ALTERNATE_DATA
 from ...schemas.api import InterventionResponseRequest, OverrideRequest
-from ..deps import DEMO_AS_OF, get_engine
+from ..deps import DEMO_AS_OF, DEMO_LABELS, DEMO_NAMES, DEMO_TAGS, get_engine
 
 router = APIRouter(prefix="/banker", tags=["banker"])
 
@@ -50,6 +50,7 @@ def early_warning_queue(capacity: int | None = None) -> dict:
         "queue": [
             {
                 "customer_token": token,
+                "name": DEMO_NAMES.get(token, token.replace("tok_", "")),
                 "verdict": s.verdict.value,
                 "pd_uplift_90d": s.pd_uplift_90d,
                 "lead_time_days": s.lead_time_days,
@@ -59,12 +60,17 @@ def early_warning_queue(capacity: int | None = None) -> dict:
                 "income_type": engine.state(token).profile.income_type.value,
                 "district": engine.state(token).profile.district,
                 "balance": format_inr(engine.state(token).profile.balance_paise),
+                "sma_stage": engine.state(token).profile.sma_stage.value,
+                "sma_stage_label": engine.state(token).profile.sma_stage.label,
+                "days_past_due": engine.state(token).profile.days_past_due,
+                "recovery_state": engine.recovery.get(token).state.value,
             }
             for token, s in ranked
         ],
         "excluded": [
             {
                 "customer_token": token,
+                "name": DEMO_NAMES.get(token, token.replace("tok_", "")),
                 "verdict": s.verdict.value,
                 "reason": (
                     "Intervention would not change the outcome"
@@ -112,6 +118,100 @@ def correlated_alerts() -> dict:
         "note": (
             "A cluster here is one event, not many. Thresholds are lowered in this "
             "demo so a small synthetic portfolio produces a visible alert."
+        ),
+        "data_provenance": "SYNTHETIC — illustrative only (report §11.2)",
+    }
+
+
+@router.get("/arrears")
+def arrears_book() -> dict:
+    """The book by Special Mention Account stage, with the evidence per account.
+
+    Read-only: it reports the classification and the Recovery-Mode state that
+    followed from it, and runs no decision, so opening this screen cannot change
+    what any customer is offered.
+    """
+    from ...engines.delinquency import VERIFY_AGAINST_CIRCULAR
+    from ...core.types import SMAStage
+
+    engine = get_engine()
+    buckets: dict[str, int] = {stage.value: 0 for stage in SMAStage}
+    accounts = []
+
+    for token, state in engine._states.items():
+        arrears = state.delinquency
+        if arrears is None:
+            continue
+        buckets[arrears.stage.value] += 1
+        if not arrears.is_flagged:
+            continue
+        accounts.append({
+            "customer_token": token,
+            "name": DEMO_NAMES.get(token, token.replace("tok_", "")),
+            "stage": arrears.stage.value,
+            "stage_label": arrears.stage.label,
+            "days_past_due": arrears.days_past_due,
+            "missed_instalments": arrears.missed_instalments,
+            "overdue_amount": format_inr(arrears.overdue_amount_paise),
+            "instalment": format_inr(arrears.instalment_paise),
+            "oldest_unpaid_due": (
+                arrears.oldest_unpaid_due.isoformat() if arrears.oldest_unpaid_due else None
+            ),
+            "last_payment_on": (
+                arrears.last_payment_on.isoformat() if arrears.last_payment_on else None
+            ),
+            "recovery_state": engine.recovery.get(token).state.value,
+            "income_type": state.profile.income_type.value,
+            "district": state.profile.district,
+            "evidence": list(arrears.evidence),
+        })
+
+    accounts.sort(key=lambda a: a["days_past_due"], reverse=True)
+    return {
+        "buckets": buckets,
+        "flagged": len(accounts),
+        "accounts": accounts,
+        "note": (
+            "Stage follows from days past due on the currently active instalment "
+            "mandate. A restructured account is aged from the new mandate, so the "
+            "arrears the restructuring resolved stop counting."
+        ),
+        "verify_against_circular": VERIFY_AGAINST_CIRCULAR,
+        "regulatory_note": (
+            "SMA banding is used here as design framing and must be cited from the "
+            "current RBI circular before any live use (report §11.2)."
+        ),
+        "data_provenance": "SYNTHETIC — illustrative only (report §11.2)",
+    }
+
+
+@router.post("/demo/reset")
+def reset_demo() -> dict:
+    """Rebuild the seeded demo portfolio from scratch.
+
+    Demo affordance only, and it exists because the conduct controls work. A
+    nudge budget of four contacts a month and a 45-day product cooldown are
+    exactly right in a bank and exactly wrong in a ten-minute demonstration:
+    after a few scenarios the Gate correctly falls silent for every customer,
+    and the demonstration then shows a suppression that the *demonstration*
+    caused rather than one the customer's circumstances did.
+
+    Resetting is honest about what it is. It discards the seeded customers and
+    their contact history and re-seeds them, which is a thing no deployment
+    would ever do — the endpoint is deliberately not reachable from any
+    customer-facing path, and the audit log it clears is a synthetic one.
+    """
+    from ..deps import get_engine as _get_engine
+
+    _get_engine.cache_clear()
+    engine = _get_engine()
+    return {
+        "reset": True,
+        "customers": len(engine._states),
+        "note": (
+            "Seeded demo portfolio rebuilt. Nudge budgets, product cooldowns, "
+            "Recovery-Mode records and the audit log start again from the "
+            "bootstrap state."
         ),
         "data_provenance": "SYNTHETIC — illustrative only (report §11.2)",
     }
@@ -219,10 +319,17 @@ def customers() -> dict:
         "customers": [
             {
                 "customer_token": token,
+                "name": DEMO_NAMES.get(token, token.replace("tok_", "")),
+                "label": DEMO_LABELS.get(token, token.replace("tok_", "").replace("_", " ")),
+                "tags": list(DEMO_TAGS.get(token, ())),
                 "income_type": s.profile.income_type.value,
                 "income_type_confidence": s.profile.income_type_confidence,
                 "posture": s.profile.posture.value,
                 "recovery_state": engine.recovery.get(token).state.value,
+                "sma_stage": s.profile.sma_stage.value,
+                "sma_stage_label": s.profile.sma_stage.label,
+                "days_past_due": s.profile.days_past_due,
+                "arrears": s.delinquency.as_dict() if s.delinquency else None,
                 "balance": format_inr(s.profile.balance_paise),
                 "monthly_income": format_inr(s.profile.monthly_income_paise),
                 "district": s.profile.district,
@@ -294,6 +401,7 @@ def intervention_response(req: InterventionResponseRequest) -> dict:
         engine.audit.append(
             RecordType.INTERVENTION_ACCEPTED, req.customer_token, {"family": req.family}
         )
+        engine.invalidate(req.customer_token)
         return {"recorded": "accepted", "treated_as_risk_signal": False}
 
     engine.recovery.record_decline(
@@ -310,6 +418,7 @@ def intervention_response(req: InterventionResponseRequest) -> dict:
             ),
         },
     )
+    engine.invalidate(req.customer_token)
     return {"recorded": "declined", "treated_as_risk_signal": False,
             "do_not_ask_again": req.do_not_ask_again}
 

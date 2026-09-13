@@ -91,3 +91,54 @@ def test_offers_are_sized_at_or_below_eligibility(engine, ingest, as_of):
     if offer is not None:
         assert offer.amount_paise <= offer.eligible_amount_paise
         assert offer.amount_paise <= rupees(500_000)
+
+
+# --- inbound requests versus unsolicited contact -----------------------------
+
+
+def test_the_contact_cap_does_not_silence_a_reply(engine, ingest, as_of):
+    """Frequency caps govern unprompted contact, not answers.
+
+    The nudge budget and the per-product cooldown exist so the bank cannot
+    pester. Applying them to a question the customer asked means answering
+    "we showed you this recently" to someone who has just asked — a refusal to
+    answer dressed as restraint.
+    """
+    token = ingest("salaried_stable")
+    first = engine.decide(token, as_of=as_of)
+    if first.decision.offer is None:
+        pytest.skip("nothing was offered unprompted, so no cooldown was set")
+
+    asked = engine.decide(token, as_of=as_of, requested_amount_paise=100_000_00)
+    blocking = asked.gate.blocking_check
+    assert blocking not in {"nudge_budget", "product_cooldown"}, (
+        f"an inbound request was blocked by {blocking}"
+    )
+
+
+def test_answering_does_not_spend_the_customers_contact_budget(engine, ingest, as_of):
+    """A reply is not a nudge, so it must not consume the customer's allowance."""
+    token = ingest("salaried_stable")
+    before = engine.budget.remaining(token, as_of)
+    engine.decide(token, as_of=as_of, requested_amount_paise=100_000_00)
+    assert engine.budget.remaining(token, as_of) == before
+
+
+def test_an_inbound_request_still_respects_do_not_ask_again(engine, ingest, as_of):
+    """The one conduct control that is the customer's own instruction."""
+    from artha.core.types import ProductFamily
+
+    token = ingest("salaried_stable")
+    engine.recovery.record_decline(
+        token, family=ProductFamily.LOAN.value, do_not_ask_again=True
+    )
+    asked = engine.decide(token, as_of=as_of, requested_amount_paise=100_000_00)
+    offer = asked.decision.offer
+    assert offer is None or offer.product.family is not ProductFamily.LOAN
+
+
+def test_an_inbound_request_is_still_suppressed_in_recovery(engine, ingest, as_of):
+    """Asking does not unlock selling to a customer the system is protecting."""
+    token = ingest("sma2_missed_thrice")
+    asked = engine.decide(token, as_of=as_of, requested_amount_paise=100_000_00)
+    assert asked.decision.offer is None

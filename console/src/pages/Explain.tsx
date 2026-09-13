@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type CustomerRow, type DecisionResponse } from "../api";
 import { Badge, outcomeTone, verdictTone } from "../components/Badge";
 import { GateTrace, ReasonCodes } from "../components/GateTrace";
+import { SmaBadge } from "../components/SmaBadge";
 import { Provenance } from "../components/Provenance";
 import { StatTile } from "../components/StatTile";
 import { TwinChart } from "../components/TwinChart";
@@ -31,6 +32,10 @@ export function Explain({
 
   useEffect(() => {
     if (!token) return;
+    // Clear first. Leaving the previous customer's decision on screen while the
+    // next one is computed shows one customer's trace under another's name,
+    // which is the one thing an explainability screen must never do.
+    setDecision(null);
     setLoading(true);
     api
       .post<DecisionResponse>("/decide", { customer_token: token })
@@ -59,20 +64,31 @@ export function Explain({
           <button
             key={c.customer_token}
             className="btn"
+            disabled={loading}
             onClick={() => onSelect(c.customer_token)}
+            title={
+              c.sma_stage === "STANDARD"
+                ? `${c.label} · ${titleCase(c.recovery_state)}`
+                : `${c.label} · ${c.sma_stage_label}, ${c.days_past_due} days past due`
+            }
             style={
               c.customer_token === token
                 ? { borderColor: "var(--series-1)", fontWeight: 600 }
                 : undefined
             }
           >
-            {c.customer_token.replace(/^tok_/, "")}
+            {c.name}
+            {c.sma_stage !== "STANDARD" ? (
+              <span style={{ marginLeft: 6 }}>
+                <SmaBadge stage={c.sma_stage} label={c.sma_stage_label} />
+              </span>
+            ) : null}
           </button>
         ))}
       </div>
 
       {loading ? <p className="loading">Running the decision pipeline…</p> : null}
-      {decision ? <DecisionView d={decision} /> : null}
+      {decision && !loading ? <DecisionView d={decision} /> : null}
     </>
   );
 }
@@ -95,7 +111,19 @@ function DecisionView({ d }: { d: DecisionResponse }) {
                   : "Cleared every constraint."
           }
         />
-        <StatTile label="Recovery state" value={titleCase(d.recovery_state)} />
+        <StatTile
+          label="Recovery state"
+          value={titleCase(d.recovery_state)}
+          note={
+            d.recovery_state === "WATCH"
+              ? "Monitored; new credit paused and deliberately no contact."
+              : d.recovery_state === "AT_RISK"
+                ? "Options offered as a service; selling suppressed."
+                : d.recovery_state === "RECOVERY"
+                  ? "All marketing suppressed; plan tracked, human support available."
+                  : undefined
+          }
+        />
         <StatTile
           label="Adverse action"
           value={d.is_adverse_action ? "Yes" : "No"}
@@ -120,6 +148,38 @@ function DecisionView({ d }: { d: DecisionResponse }) {
         </p>
       </div>
 
+      {d.arrears && d.sma_stage !== "STANDARD" ? (
+        <div className="card">
+          <h2>Arrears — Special Mention Account stage</h2>
+          <div className="grid grid-3" style={{ marginBottom: 12 }}>
+            <StatTile
+              label="Stage"
+              value={<SmaBadge stage={d.sma_stage} label={d.sma_stage_label} />}
+              note={`${d.arrears.missed_instalments} instalment(s) outstanding`}
+            />
+            <StatTile label="Days past due" value={d.arrears.days_past_due} />
+            <StatTile
+              label="In arrears"
+              value={d.arrears.overdue_amount}
+              note={`Instalment ${d.arrears.instalment}`}
+            />
+          </div>
+          <h3>Evidence</h3>
+          <ul className="small secondary" style={{ margin: 0, paddingLeft: 18 }}>
+            {d.arrears.evidence.map((e, i) => (
+              <li key={i}>{e}</li>
+            ))}
+          </ul>
+          {d.arrears.verify_against_circular ? (
+            <p className="small muted" style={{ marginBottom: 0, marginTop: 10 }}>
+              The stage bands are used here as design framing and must be cited from the current
+              RBI circular before any live use. An account whose mandate has been restructured is
+              aged from the new mandate, so the arrears the restructuring resolved stop counting.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {d.twin ? (
         <div className="card">
           <h2>Financial Twin — projected balance</h2>
@@ -130,6 +190,8 @@ function DecisionView({ d }: { d: DecisionResponse }) {
             pathWith={d.twin.path_with}
             pathWithout={d.twin.path_without}
             pathP05={d.twin.path_p05}
+            pathDays={d.twin.path_days}
+            horizonDays={d.twin.horizon_days || 180}
             safeBufferPaise={d.twin.safe_buffer_paise}
           />
           <div className="grid grid-3" style={{ marginTop: 12 }}>

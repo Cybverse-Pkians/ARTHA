@@ -63,6 +63,13 @@ class FairnessMonitor:
     min_slice_size: int = 30                # below this, a gap is noise
     stats: dict[str, SliceStats] = field(default_factory=lambda: defaultdict(SliceStats))
     population: SliceStats = field(default_factory=SliceStats)
+    # Unlike the other conduct controls this one is genuinely global: one
+    # customer's outcome can move a slice the whole cohort sits in. The counter
+    # therefore advances only when the *set of breaching slices* changes, which
+    # is the only thing here that can change another customer's gate outcome.
+    # Advancing it on every recorded decision would invalidate every cached
+    # decision on every decision.
+    breach_revision: int = 0
 
     def record(
         self, profile: CustomerProfile, outcome: GateOutcome, *, gender: str | None = None
@@ -76,6 +83,13 @@ class FairnessMonitor:
             st.protected += int(outcome is GateOutcome.PROTECT)
         self.population.decisions += 1
         self.population.favourable += int(favourable)
+
+        breaching = frozenset(key for key, _ in self.breaching_slices())
+        if breaching != self._last_breaching:
+            self._last_breaching = breaching
+            self.breach_revision += 1
+
+    _last_breaching: frozenset[str] = field(default_factory=frozenset)
 
     def gap(self, slice_key: str) -> float:
         """Relative benefit gap of a slice against the population."""

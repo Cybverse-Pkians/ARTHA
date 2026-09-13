@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type CorrelatedAlert, type QueueResponse } from "../api";
 import { Badge, verdictTone } from "../components/Badge";
 import { Provenance } from "../components/Provenance";
+import { SmaBadge } from "../components/SmaBadge";
 import { StatTile } from "../components/StatTile";
 import { formatPercent, titleCase } from "../components/format";
 
@@ -75,6 +76,8 @@ export function Queue({ onSelect }: { onSelect: (token: string) => void }) {
               <tr>
                 <th>Customer</th>
                 <th>Signal</th>
+                <th>SMA stage</th>
+                <th>Recovery</th>
                 <th className="num">PD uplift (90d)</th>
                 <th className="num">Lead time</th>
                 <th>Ability</th>
@@ -89,10 +92,21 @@ export function Queue({ onSelect }: { onSelect: (token: string) => void }) {
                   onClick={() => onSelect(r.customer_token)}
                   style={{ cursor: "pointer" }}
                 >
-                  <td className="mono">{r.customer_token}</td>
+                  <td>
+                    <strong>{r.name}</strong>
+                    <div className="mono small muted">{r.customer_token}</div>
+                  </td>
                   <td>
                     <Badge tone={verdictTone(r.verdict)}>{titleCase(r.verdict)}</Badge>
                   </td>
+                  <td>
+                    <SmaBadge
+                      stage={r.sma_stage}
+                      label={r.sma_stage_label}
+                      daysPastDue={r.sma_stage === "STANDARD" ? undefined : r.days_past_due}
+                    />
+                  </td>
+                  <td className="small">{titleCase(r.recovery_state)}</td>
                   <td className="num">+{formatPercent(r.pd_uplift_90d)}</td>
                   <td className="num">
                     {r.lead_time_days === null ? "—" : `${r.lead_time_days} d`}
@@ -104,7 +118,7 @@ export function Queue({ onSelect }: { onSelect: (token: string) => void }) {
               ))}
               {data.queue.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="muted">
+                  <td colSpan={9} className="muted">
                     Nobody needs contacting today. That is a valid outcome.
                   </td>
                 </tr>
@@ -134,7 +148,10 @@ export function Queue({ onSelect }: { onSelect: (token: string) => void }) {
               <tbody>
                 {data.excluded.map((r) => (
                   <tr key={r.customer_token}>
-                    <td className="mono">{r.customer_token}</td>
+                    <td>
+                    <strong>{r.name}</strong>
+                    <div className="mono small muted">{r.customer_token}</div>
+                  </td>
                     <td>
                       <Badge tone={verdictTone(r.verdict)}>{titleCase(r.verdict)}</Badge>
                     </td>

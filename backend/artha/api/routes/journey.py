@@ -167,6 +167,9 @@ def set_consent(req: ConsentRequest) -> dict:
         RecordType.CONSENT_CHANGE, req.customer_token,
         {"purpose": purpose.value, "action": action}, actor="customer",
     )
+    # Consent is enforced at inference time, so a change has to reach the next
+    # decision rather than the next cache expiry.
+    engine.invalidate(req.customer_token)
     return {"purpose": purpose.value, "action": action}
 
 

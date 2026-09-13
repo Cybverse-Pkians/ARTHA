@@ -19,6 +19,8 @@ from ..core.types import (
     IncomeType,
     RecoveryState,
 )
+from ..engines.delinquency import DelinquencyResult
+from ..engines.delinquency import assess as assess_delinquency
 from ..ontology.enrich import (
     EnrichmentResult,
     monthly_discretionary_paise,
@@ -46,6 +48,7 @@ def build_profile(
     tenure_with_bank_months: int = 0,
     on_time_emi_streak: int = 0,
     as_of: date | None = None,
+    delinquency: DelinquencyResult | None = None,
 ) -> CustomerProfile:
     income = enrichment.income
     monthly_income = enrichment.monthly_income_paise
@@ -53,6 +56,14 @@ def build_profile(
     existing_emi = enrichment.existing_emi_paise
     discretionary = monthly_discretionary_paise(enrichment.enriched)
     income_day, income_day_dispersion = observed_income_day(enrichment.enriched)
+
+    # Arrears are derived here rather than accepted as an argument, so a profile
+    # can never carry an SMA stage that its own transaction history does not
+    # support. Callers that have already run the classifier pass it in to avoid
+    # repeating the walk; they cannot use it to assert a different answer.
+    arrears = delinquency or assess_delinquency(
+        enrichment.series, enrichment.enriched, as_of=as_of
+    )
 
     return CustomerProfile(
         customer_token=customer_token,
@@ -63,6 +74,8 @@ def build_profile(
         income_type_overridden=income.overridden,
         posture=infer_posture(monthly_income, committed, existing_emi, balance_paise, credit_utilisation),
         recovery_state=recovery_state,
+        sma_stage=arrears.stage,
+        days_past_due=arrears.days_past_due,
         balance_paise=balance_paise,
         monthly_income_paise=monthly_income,
         income_volatility=income.features.get("income_amount_cv", 0.0),

@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
+from ..core.revision import RevisionCounter
 from .purposes import REGISTRY, Purpose
 
 
@@ -46,6 +47,10 @@ class ConsentManager:
     """
 
     grants: dict[str, dict[Purpose, ConsentGrant]] = field(default_factory=dict)
+    # Bumped on every grant or revocation. Consent is enforced at inference
+    # time, so a cached decision taken under the old scope has to be recognised
+    # as stale the moment the customer changes it.
+    revisions: RevisionCounter = field(default_factory=RevisionCounter)
 
     def grant(
         self,
@@ -65,6 +70,7 @@ class ConsentManager:
             source=source,
         )
         self.grants.setdefault(customer_token, {})[purpose] = grant
+        self.revisions.bump(customer_token)
         return grant
 
     def grant_defaults(self, customer_token: str, *, as_of: date | None = None) -> None:
@@ -87,6 +93,7 @@ class ConsentManager:
             purpose=purpose, granted_at=existing.granted_at,
             expires_at=existing.expires_at, source=existing.source, revoked=True,
         )
+        self.revisions.bump(customer_token)
         return True
 
     def is_live(self, customer_token: str, purpose: Purpose, *, as_of: date | None = None) -> bool:
